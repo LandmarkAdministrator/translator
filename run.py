@@ -87,6 +87,10 @@ Examples:
         os.execv(sys.executable, [sys.executable, str(PROJECT_ROOT / "scripts" / "test_gpu.py")])
         return 0
 
+    # Set up file logging
+    from utils.logger import setup_logger
+    setup_logger(log_dir="logs", log_level="INFO")
+
     # Load saved settings
     from config.settings import load_settings
     from audio.device_manager import AudioDeviceManager
@@ -171,7 +175,7 @@ Examples:
         asr_model = args.model
         print(f"ASR model (from command line): {asr_model}")
     else:
-        asr_model = config.get("asr_model", "large-v3")
+        asr_model = config.get("asr_model", "base.en")
         print(f"ASR model (from saved config): {asr_model}")
     print("=" * 60)
 

@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Callable
 from pathlib import Path
 import numpy as np
+from loguru import logger
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -429,17 +430,17 @@ class TranslationCoordinator:
         for pipeline in self._pipelines.values():
             pipeline.process(result.text)
 
-        # Print transcription
-        print(f"[EN] {result.text}")
+        # Log transcription to file and console
+        logger.info("[EN] {}", result.text)
 
     def _on_translation_event(self, event: TranslationEvent) -> None:
         """Handle translation event from pipeline."""
         self._stats['translations'] += 1
         self._stats['total_latency'] += event.total_latency
 
-        # Print translation
+        # Log translation to file and console
         lang_upper = event.target_language.upper()
-        print(f"[{lang_upper}] {event.translated_text} ({event.total_latency:.2f}s)")
+        logger.info("[{}] {} ({:.2f}s)", lang_upper, event.translated_text, event.total_latency)
 
         # Notify callbacks
         for callback in self._callbacks:
@@ -540,6 +541,10 @@ class TranslationCoordinator:
             print(f"  Transcriptions: {stats['transcriptions']}")
             print(f"  Translations: {stats['translations']}")
             print(f"  Average latency: {stats['average_latency']:.2f}s")
+            logger.info(
+                "Session ended — transcriptions: {}, translations: {}, avg latency: {:.2f}s",
+                stats['transcriptions'], stats['translations'], stats['average_latency']
+            )
 
     def __enter__(self):
         """Context manager entry."""
