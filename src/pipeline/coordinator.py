@@ -473,6 +473,13 @@ class TranslationCoordinator:
         if not self._running:
             return
 
+        try:
+            self._on_audio_chunk_inner(chunk)
+        except Exception as e:
+            logger.error("ASR callback error: {}", e)
+
+    def _on_audio_chunk_inner(self, chunk: AudioChunk) -> None:
+        """Inner handler — exceptions here are caught by _on_audio_chunk."""
         chunk_duration = chunk.duration
         queue_depths = {lang: p._queue.qsize() for lang, p in self._pipelines.items()}
         queue_str = ",".join(f"{l}:{d}" for l, d in queue_depths.items())
@@ -532,7 +539,11 @@ class TranslationCoordinator:
         if not self._running:
             return
 
-        result = self._streaming_buffer.feed(chunk.data, chunk.chunk_start_time)
+        try:
+            result = self._streaming_buffer.feed(chunk.data, chunk.chunk_start_time)
+        except Exception as e:
+            logger.error("Streaming ASR callback error: {}", e)
+            return
         if result is None:
             return
 

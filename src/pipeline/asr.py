@@ -436,14 +436,21 @@ class WhisperTransformersService:
         generate_kwargs = {
             "language": self.language,
             "task": "transcribe",
-            "condition_on_prev_tokens": False,  # No context bleed between chunks
-            "no_repeat_ngram_size": 3,          # Suppress 3-gram repetition during decoding
         }
-        result = self._pipe(
-            {"raw": audio, "sampling_rate": 16000},
-            return_timestamps=True,
-            generate_kwargs=generate_kwargs,
-        )
+        try:
+            result = self._pipe(
+                {"raw": audio, "sampling_rate": 16000},
+                return_timestamps=True,
+                generate_kwargs=generate_kwargs,
+            )
+        except Exception as e:
+            print(f"  [ASR ERROR] WhisperTransformers failed: {e}")
+            processing_time = time.time() - start_time
+            return TranscriptionResult(
+                text="", segments=[], language=self.language,
+                language_probability=1.0, duration=audio_duration,
+                processing_time=processing_time,
+            )
 
         full_text = result.get("text", "").strip()
 
