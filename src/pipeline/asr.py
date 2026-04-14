@@ -433,10 +433,12 @@ class WhisperTransformersService:
         if max_val > 0:
             audio = audio / max_val
 
-        generate_kwargs = {
-            "language": self.language,
-            "task": "transcribe",
-        }
+        # English-only models (*.en) don't accept language/task params
+        if self.model_size.endswith(".en"):
+            generate_kwargs = {}
+        else:
+            generate_kwargs = {"language": self.language, "task": "transcribe"}
+
         try:
             result = self._pipe(
                 {"raw": audio, "sampling_rate": 16000},
