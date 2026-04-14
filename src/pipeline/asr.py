@@ -371,7 +371,7 @@ class WhisperTransformersService:
         kwargs = dict(
             model=self._model_id,
             device=self._device,
-            torch_dtype=torch_dtype,
+            dtype=torch_dtype,
             model_kwargs={"attn_implementation": "eager"},  # ROCm: skip flash-attn
         )
         if self._download_root:
