@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from audio.input_stream import AudioInputStream, AudioChunk
 from audio.output_stream import AudioOutputStream, SharedStereoOutput, ChannelOutputProxy
-from pipeline.asr import ASRService, StreamingASRBuffer, TranscriptionResult
+from pipeline.asr import ASRService, WhisperTransformersService, StreamingASRBuffer, TranscriptionResult
 from pipeline.translation import TranslationService, TranslationResult
 from pipeline.tts import TTSService, SpeechResult
 
@@ -316,14 +316,22 @@ class TranslationCoordinator:
         print("Loading Translation Coordinator")
         print("=" * 60)
 
-        # Load ASR
+        # Load ASR — use transformers (PyTorch ROCm) for GPU, CTranslate2 for CPU
         print("\nLoading ASR service...")
-        self._asr = ASRService(
-            model_size=self._asr_model,
-            language="en",
-            device=self._asr_device,
-            download_root=f"{self._models_dir}/asr",
-        )
+        if self._asr_device == "cuda":
+            self._asr = WhisperTransformersService(
+                model_size=self._asr_model,
+                language="en",
+                device="cuda",
+                download_root=f"{self._models_dir}/asr/transformers",
+            )
+        else:
+            self._asr = ASRService(
+                model_size=self._asr_model,
+                language="en",
+                device="cpu",
+                download_root=f"{self._models_dir}/asr",
+            )
         self._asr.load()
 
         # Load language pipelines

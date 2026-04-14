@@ -129,16 +129,31 @@ class ASRService:
         print(f"Loading Whisper model '{self.model_size}' on {device_label}...")
         print(f"Compute type: {self._compute_type}")
 
-        self._model = WhisperModel(
-            self.model_size,
-            device=self._device,
-            compute_type=self._compute_type,
-            download_root=self._download_root,
-            cpu_threads=os.cpu_count() or 4,
-        )
+        try:
+            self._model = WhisperModel(
+                self.model_size,
+                device=self._device,
+                compute_type=self._compute_type,
+                download_root=self._download_root,
+                cpu_threads=os.cpu_count() or 4,
+            )
+        except RuntimeError as e:
+            if self._device == "cuda":
+                print(f"GPU load failed ({e}), falling back to CPU...")
+                self._device = "cpu"
+                self._compute_type = "int8"
+                self._model = WhisperModel(
+                    self.model_size,
+                    device="cpu",
+                    compute_type="int8",
+                    download_root=self._download_root,
+                    cpu_threads=os.cpu_count() or 4,
+                )
+            else:
+                raise
 
         self._loaded = True
-        print("Whisper model loaded successfully")
+        print(f"Whisper model loaded successfully on {self._device}")
 
     def unload(self) -> None:
         """Unload the model to free memory."""
@@ -292,6 +307,165 @@ class ASRService:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
+        self.unload()
+        return False
+
+
+class WhisperTransformersService:
+    """
+    GPU-accelerated Whisper using HuggingFace transformers + PyTorch.
+
+    Uses the same PyTorch backend that runs MarianMT and Piper, so it works
+    correctly with AMD ROCm (unlike ASRService which uses CTranslate2 with
+    NVIDIA-only CUDA binaries).
+
+    Requires: pip install transformers (already installed)
+    Model is downloaded from HuggingFace on first load (~3GB for large-v3).
+    """
+
+    MODEL_MAP = {
+        "large-v3": "openai/whisper-large-v3",
+        "medium.en": "openai/whisper-medium.en",
+        "small.en": "openai/whisper-small.en",
+        "base.en": "openai/whisper-base.en",
+        "tiny.en": "openai/whisper-tiny.en",
+        "medium": "openai/whisper-medium",
+        "small": "openai/whisper-small",
+        "base": "openai/whisper-base",
+        "tiny": "openai/whisper-tiny",
+    }
+
+    def __init__(
+        self,
+        model_size: str = "large-v3",
+        language: str = "en",
+        device: str = "cuda",
+        min_audio_energy: float = 0.01,
+        no_speech_threshold: float = 0.6,
+        download_root: Optional[str] = None,
+    ):
+        self.model_size = model_size
+        self.language = language
+        self.min_audio_energy = min_audio_energy
+        self.no_speech_threshold = no_speech_threshold
+
+        self._device = device
+        self._model_id = self.MODEL_MAP.get(model_size, f"openai/whisper-{model_size}")
+        self._download_root = download_root
+        self._pipe = None
+        self._loaded = False
+
+    def load(self) -> None:
+        """Load the Whisper model via transformers pipeline."""
+        if self._loaded:
+            return
+
+        import torch
+        from transformers import pipeline as hf_pipeline, AutoProcessor
+
+        device_label = "GPU (ROCm/CUDA)" if self._device == "cuda" else "CPU"
+        print(f"Loading Whisper model '{self.model_size}' on {device_label} (transformers)...")
+
+        torch_dtype = torch.float16 if self._device == "cuda" else torch.float32
+
+        kwargs = dict(
+            model=self._model_id,
+            device=self._device,
+            torch_dtype=torch_dtype,
+            model_kwargs={"attn_implementation": "eager"},  # ROCm: skip flash-attn
+        )
+        if self._download_root:
+            kwargs["model_kwargs"]["cache_dir"] = self._download_root
+
+        self._pipe = hf_pipeline("automatic-speech-recognition", **kwargs)
+        self._loaded = True
+        print(f"Whisper model loaded successfully on {self._device}")
+
+    def unload(self) -> None:
+        """Unload model and free GPU memory."""
+        if self._pipe is not None:
+            del self._pipe
+            self._pipe = None
+            self._loaded = False
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+    @property
+    def is_loaded(self) -> bool:
+        return self._loaded
+
+    @property
+    def device(self) -> str:
+        return self._device
+
+    def transcribe(self, audio: np.ndarray, sample_rate: int = 16000) -> TranscriptionResult:
+        """Transcribe audio using transformers Whisper pipeline."""
+        if not self._loaded:
+            self.load()
+
+        start_time = time.time()
+
+        if audio.dtype != np.float32:
+            audio = audio.astype(np.float32)
+
+        if sample_rate != 16000:
+            ratio = 16000 / sample_rate
+            new_length = int(len(audio) * ratio)
+            indices = np.linspace(0, len(audio) - 1, new_length)
+            audio = np.interp(indices, np.arange(len(audio)), audio).astype(np.float32)
+
+        audio_duration = len(audio) / 16000
+
+        rms_energy = np.sqrt(np.mean(audio ** 2))
+        if rms_energy < self.min_audio_energy:
+            return TranscriptionResult(
+                text="", segments=[], language=self.language,
+                language_probability=1.0, duration=audio_duration,
+                processing_time=time.time() - start_time,
+            )
+
+        # Normalize
+        max_val = np.max(np.abs(audio))
+        if max_val > 0:
+            audio = audio / max_val
+
+        generate_kwargs = {"language": self.language, "task": "transcribe"}
+        result = self._pipe(
+            {"raw": audio, "sampling_rate": 16000},
+            return_timestamps=True,
+            generate_kwargs=generate_kwargs,
+        )
+
+        full_text = result.get("text", "").strip()
+        chunks = result.get("chunks", [])
+
+        segments = []
+        for chunk in chunks:
+            text = chunk.get("text", "").strip()
+            ts = chunk.get("timestamp", (0.0, audio_duration))
+            start = ts[0] if ts[0] is not None else 0.0
+            end = ts[1] if ts[1] is not None else audio_duration
+            if len(text) >= 3:
+                segments.append(TranscriptionSegment(
+                    text=text, start=start, end=end, confidence=-0.3,
+                ))
+
+        processing_time = time.time() - start_time
+        return TranscriptionResult(
+            text=full_text, segments=segments, language=self.language,
+            language_probability=1.0, duration=audio_duration,
+            processing_time=processing_time,
+        )
+
+    def __enter__(self):
+        self.load()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
         self.unload()
         return False
 
