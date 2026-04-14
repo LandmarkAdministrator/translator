@@ -1,0 +1,21 @@
+# ==============================================================================
+# REFERENCE TRANSCRIPT — JFK Inaugural Address, January 20, 1961
+# ==============================================================================
+#
+# BEFORE USING THIS FILE:
+#   Replace everything below the "---REFERENCE BEGINS---" marker with the
+#   canonical transcript from:
+#
+#     https://www.jfklibrary.org/learn/about-jfk/historic-speeches/inaugural-address
+#
+#   (JFK Presidential Library — authoritative source.)
+#
+#   Lines starting with "#" are comments and are ignored by the analyzer.
+#   The analyzer lowercases, strips punctuation, and collapses whitespace on
+#   both the reference and the ASR output before computing WER, so you do NOT
+#   need to manually normalize. Just paste the speech as-is.
+#
+#   Verify the run duration (~14 minutes) matches the source you play on TV.
+#
+# ==============================================================================
+---REFERENCE BEGINS---
