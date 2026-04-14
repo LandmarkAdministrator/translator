@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from audio.input_stream import AudioInputStream, AudioChunk
 from audio.output_stream import AudioOutputStream, SharedStereoOutput, ChannelOutputProxy
-from pipeline.asr import ASRService, TranscriptionResult
+from pipeline.asr import ASRService, StreamingASRBuffer, TranscriptionResult
 from pipeline.translation import TranslationService, TranslationResult
 from pipeline.tts import TTSService, SpeechResult
 
@@ -261,10 +261,13 @@ class TranslationCoordinator:
         languages: List[PipelineConfig] = None,
         asr_model: str = "base.en",
         models_dir: Optional[str] = None,
+        streaming: bool = False,
     ):
         self._input_device = input_device
         self._asr_model = asr_model
         self._models_dir = models_dir or str(Path(__file__).parent.parent.parent / "models")
+        self._streaming = streaming
+        self._streaming_buffer: Optional[StreamingASRBuffer] = None
 
         # Default languages if not specified
         if languages is None:
@@ -356,24 +359,39 @@ class TranslationCoordinator:
                 pipeline.set_callback(self._on_translation_event)
                 self._pipelines[config.language_code] = pipeline
 
-        # Initialize audio input with silence-based chunking
+        # Initialize audio input
         print("\nInitializing audio input...")
-        self._audio_input = AudioInputStream(
-            device=self._input_device,
-            sample_rate=16000,
-            # Silence-based chunking: wait for pauses in speech
-            target_chunk_duration=7.0,   # Target 7 seconds of speech
-            max_chunk_duration=12.0,     # Force emit after 12 seconds
-            silence_threshold=0.02,      # RMS threshold for silence detection
-            min_silence_duration=0.5,    # 500ms of silence triggers emit
-        )
-        self._audio_input.add_callback(self._on_audio_chunk)
+        if self._streaming:
+            # Streaming mode: emit small frequent chunks (~1-2s).
+            # StreamingASRBuffer handles sentence detection via rolling re-transcription.
+            self._audio_input = AudioInputStream(
+                device=self._input_device,
+                sample_rate=16000,
+                target_chunk_duration=0.5,   # Start checking for silence immediately
+                max_chunk_duration=1.5,      # Force emit every 1.5s regardless
+                silence_threshold=0.02,
+                min_silence_duration=0.3,
+            )
+            self._streaming_buffer = StreamingASRBuffer(self._asr)
+            self._audio_input.add_callback(self._on_audio_chunk_streaming)
+        else:
+            # Batch mode: silence-based chunking (original behaviour)
+            self._audio_input = AudioInputStream(
+                device=self._input_device,
+                sample_rate=16000,
+                target_chunk_duration=7.0,
+                max_chunk_duration=12.0,
+                silence_threshold=0.02,
+                min_silence_duration=0.5,
+            )
+            self._audio_input.add_callback(self._on_audio_chunk)
 
+        mode_str = "streaming (rolling re-transcription)" if self._streaming else "batch (silence-based)"
         print("\n" + "=" * 60)
         print("Translation Coordinator Ready")
         print(f"  Input device: {self._audio_input.device.name} (index {self._audio_input.device.index})")
         print(f"  Native sample rate: {self._audio_input.native_sample_rate}Hz -> resampled to {self._audio_input.sample_rate}Hz")
-        print(f"  Chunking: silence-based (target {self._audio_input.target_chunk_duration}s, max {self._audio_input.max_chunk_duration}s)")
+        print(f"  Mode: {mode_str}")
         print(f"  Languages: {', '.join(self._pipelines.keys())}")
         print("=" * 60)
 
@@ -475,19 +493,54 @@ class TranslationCoordinator:
         self._stats['transcriptions'] += 1
         self._stats['total_asr_time'] += asr_time
 
+        # Translate each Whisper segment individually instead of the joined blob.
+        # Whisper segments are phrase/sentence-level boundaries determined by the
+        # model itself — far more accurate than our silence-based chunk boundaries.
+        # Segment timestamps also give us per-sentence e2e latency.
+        for seg in result.segments:
+            # Wall-clock time when this specific sentence started being spoken
+            seg_start_wall = (chunk.chunk_start_time + seg.start) if chunk.chunk_start_time > 0 else 0.0
+
+            print(f"  [EN] {seg.text}  [{seg.start:.1f}s–{seg.end:.1f}s conf={seg.confidence:.2f}]")
+            logger.info(
+                "[EN] {} | chunk={:.2f}s | seg={:.2f}-{:.2f}s | asr={:.3f}s | confidence={:.3f} | lang_prob={:.3f}",
+                seg.text, chunk_duration, seg.start, seg.end, asr_time,
+                seg.confidence, result.language_probability,
+            )
+
+            for pipeline in self._pipelines.values():
+                pipeline.process(
+                    seg.text,
+                    chunk_start_time=seg_start_wall,
+                    chunk_duration=seg.duration,
+                    asr_time=asr_time,
+                )
+
+    def _on_audio_chunk_streaming(self, chunk: AudioChunk) -> None:
+        """Handle incoming audio in streaming mode — feed into rolling buffer."""
+        if not self._running:
+            return
+
+        result = self._streaming_buffer.feed(chunk.data, chunk.chunk_start_time)
+        if result is None:
+            return
+
+        new_text, seg_start_wall, asr_time = result
+
+        self._stats['transcriptions'] += 1
+        self._stats['total_asr_time'] += asr_time
+
+        print(f"\n  [EN/stream] {new_text}")
         logger.info(
-            "[EN] {} | chunk={:.2f}s | asr={:.3f}s | confidence={:.3f} | lang_prob={:.3f}",
-            result.text, chunk_duration, asr_time,
-            result.segments[0].confidence if result.segments else 0.0,
-            result.language_probability,
+            "[EN] {} | mode=streaming | asr={:.3f}s",
+            new_text, asr_time,
         )
 
-        # Send to all language pipelines with full timing context
         for pipeline in self._pipelines.values():
             pipeline.process(
-                result.text,
-                chunk_start_time=chunk.chunk_start_time,
-                chunk_duration=chunk_duration,
+                new_text,
+                chunk_start_time=seg_start_wall,
+                chunk_duration=0.0,
                 asr_time=asr_time,
             )
 
@@ -597,6 +650,15 @@ class TranslationCoordinator:
             # Stop audio input but let pipelines finish
             if self._audio_input:
                 self._audio_input.stop()
+
+            # Flush any remaining text in the streaming buffer
+            if self._streaming and self._streaming_buffer:
+                flush_result = self._streaming_buffer.flush()
+                if flush_result:
+                    text, start_wall, asr_time = flush_result
+                    logger.info("[EN] {} | mode=streaming/flush | asr={:.3f}s", text, asr_time)
+                    for pipeline in self._pipelines.values():
+                        pipeline.process(text, chunk_start_time=start_wall, asr_time=asr_time)
 
             # Wait for pipelines to drain their queues
             try:
