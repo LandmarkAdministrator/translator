@@ -15,11 +15,18 @@ import os
 import sys
 from pathlib import Path
 
-# Set GPU environment
-os.environ['HSA_OVERRIDE_GFX_VERSION'] = '11.0.0'
-
-# Add project to path
+# Load GPU environment from .env.rocm if present (written by install.sh for AMD)
 PROJECT_ROOT = Path(__file__).parent.parent
+_env_file = PROJECT_ROOT / ".env.rocm"
+if _env_file.exists():
+    with open(_env_file) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line.startswith("export "):
+                _line = _line[7:]
+            if "=" in _line and not _line.startswith("#"):
+                _key, _, _val = _line.partition("=")
+                os.environ.setdefault(_key.strip(), _val.strip())
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from typing import List, Dict, Optional
@@ -177,15 +184,43 @@ def select_output_channel(language: str, current_channel: Optional[int] = None) 
         return 1  # Right
 
 
-def configure_languages(manager: AudioDeviceManager, current_languages: List[Dict]) -> List[Dict]:
-    """Configure target languages."""
-    available_languages = [
+def get_available_languages() -> List[tuple]:
+    """Return language pairs whose models are actually downloaded."""
+    from pipeline.translation import TranslationService
+
+    all_languages = [
         ("es", "Spanish"),
         ("ht", "Haitian Creole"),
         ("fr", "French"),
         ("pt", "Portuguese"),
         ("de", "German"),
+        ("zh", "Chinese"),
+        ("ja", "Japanese"),
+        ("ko", "Korean"),
+        ("ar", "Arabic"),
+        ("ru", "Russian"),
     ]
+
+    models_dir = PROJECT_ROOT / "models" / "translation"
+    available = []
+    for code, name in all_languages:
+        key = ("en", code)
+        if key not in TranslationService.MODEL_MAP:
+            continue
+        model_id = TranslationService.MODEL_MAP[key]
+        # HuggingFace cache uses "models--org--name" directory naming
+        cache_dir_name = "models--" + model_id.replace("/", "--")
+        if (models_dir / cache_dir_name).exists():
+            available.append((code, name))
+        else:
+            print(f"  (skipping {name} — model not downloaded)")
+
+    return available
+
+
+def configure_languages(manager: AudioDeviceManager, current_languages: List[Dict]) -> List[Dict]:
+    """Configure target languages."""
+    available_languages = get_available_languages()
 
     # Build lookup for current settings
     current_by_code = {lang["code"]: lang for lang in current_languages}
