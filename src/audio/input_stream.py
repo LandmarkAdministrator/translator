@@ -45,9 +45,12 @@ def resample_audio(audio: np.ndarray, from_rate: int, to_rate: int) -> np.ndarra
 class AudioChunk:
     """Represents a chunk of audio data."""
     data: np.ndarray
-    timestamp: float
+    timestamp: float        # When the chunk was emitted (end of accumulation)
     sample_rate: int
     channels: int
+    chunk_start_time: float = 0.0   # When the first sample of this chunk arrived
+    emit_reason: str = "unknown"    # 'silence', 'max_duration', or 'stop'
+    peak_rms: float = 0.0           # Peak RMS energy across the chunk
 
     @property
     def duration(self) -> float:
@@ -58,6 +61,13 @@ class AudioChunk:
     def samples(self) -> int:
         """Number of samples."""
         return len(self.data)
+
+    @property
+    def accumulation_time(self) -> float:
+        """How long it took to accumulate this chunk (wall clock)."""
+        if self.chunk_start_time > 0:
+            return self.timestamp - self.chunk_start_time
+        return 0.0
 
 
 class CircularAudioBuffer:
@@ -246,6 +256,9 @@ class AudioInputStream:
         self._target_samples = int(target_chunk_duration * sample_rate)
         self._max_samples = int(max_chunk_duration * sample_rate)
         self._chunk_lock = threading.Lock()
+        self._chunk_start_time: float = 0.0  # When the current chunk started accumulating
+        self._chunk_peak_rms: float = 0.0    # Peak RMS seen in current chunk
+        self._emit_reason: str = "unknown"
 
         # Stream state
         self._stream: Optional[sd.InputStream] = None
@@ -312,7 +325,7 @@ class AudioInputStream:
         if callback in self._callbacks:
             self._callbacks.remove(callback)
 
-    def _emit_chunk(self) -> None:
+    def _emit_chunk(self, reason: str = "unknown") -> None:
         """Emit the current chunk buffer to callbacks."""
         with self._chunk_lock:
             if not self._chunk_buffer:
@@ -320,14 +333,16 @@ class AudioInputStream:
 
             # Concatenate all audio in the chunk buffer
             chunk_data = np.concatenate(self._chunk_buffer)
-            chunk_duration = len(chunk_data) / self.sample_rate
 
-            # Create the chunk
+            # Create the chunk with full timing/quality metadata
             chunk = AudioChunk(
                 data=chunk_data,
                 timestamp=time.time(),
                 sample_rate=self.sample_rate,
                 channels=self.channels,
+                chunk_start_time=self._chunk_start_time,
+                emit_reason=reason,
+                peak_rms=self._chunk_peak_rms,
             )
 
             # Add to ready queue
@@ -337,6 +352,8 @@ class AudioInputStream:
             self._chunk_buffer = []
             self._chunk_samples = 0
             self._silence_samples = 0
+            self._chunk_start_time = 0.0
+            self._chunk_peak_rms = 0.0
 
     def _audio_callback(
         self,
@@ -347,7 +364,9 @@ class AudioInputStream:
     ) -> None:
         """Internal callback for sounddevice stream."""
         if status:
-            pass  # Could log audio issues
+            # Log hardware issues (overflow = CPU too slow, underflow = buffer underrun)
+            from loguru import logger
+            logger.warning("Audio device status: {}", str(status))
 
         # Convert to mono if needed
         if indata.ndim > 1 and indata.shape[1] > 1:
@@ -363,13 +382,20 @@ class AudioInputStream:
         self._buffer.append(data)
 
         # Silence-based chunking logic
+        emit_reason = None
         with self._chunk_lock:
+            # Record when this chunk started
+            if self._chunk_samples == 0:
+                self._chunk_start_time = time.time()
+
             # Add data to current chunk buffer
             self._chunk_buffer.append(data.copy())
             self._chunk_samples += len(data)
 
             # Calculate RMS energy of this block
             rms_energy = np.sqrt(np.mean(data ** 2))
+            if rms_energy > self._chunk_peak_rms:
+                self._chunk_peak_rms = rms_energy
 
             # Check if this block is silence
             if rms_energy < self.silence_threshold:
@@ -377,20 +403,17 @@ class AudioInputStream:
             else:
                 self._silence_samples = 0
 
-            # Decide whether to emit chunk
-            should_emit = False
-
             # Case 1: Reached target duration AND detected silence
             if (self._chunk_samples >= self._target_samples and
-                self._silence_samples >= self._min_silence_samples):
-                should_emit = True
+                    self._silence_samples >= self._min_silence_samples):
+                emit_reason = "silence"
 
             # Case 2: Reached max duration (forced emit)
             if self._chunk_samples >= self._max_samples:
-                should_emit = True
+                emit_reason = "max_duration"
 
-        if should_emit:
-            self._emit_chunk()
+        if emit_reason:
+            self._emit_chunk(reason=emit_reason)
 
     def _process_loop(self) -> None:
         """Background thread for processing audio chunks."""
@@ -424,6 +447,8 @@ class AudioInputStream:
             self._chunk_buffer = []
             self._chunk_samples = 0
             self._silence_samples = 0
+            self._chunk_start_time = 0.0
+            self._chunk_peak_rms = 0.0
         self._ready_chunks.clear()
 
         # Create and start the audio stream at NATIVE rate
@@ -455,7 +480,7 @@ class AudioInputStream:
         self._stop_event.set()
 
         # Emit any remaining audio in buffer
-        self._emit_chunk()
+        self._emit_chunk(reason="stop")
 
         if self._stream is not None:
             self._stream.stop()

@@ -43,12 +43,18 @@ class PipelineConfig:
 @dataclass
 class TranslationEvent:
     """Event representing a translation through the pipeline."""
-    timestamp: float
+    timestamp: float            # When the event was created
     source_text: str
     translated_text: str
     target_language: str
-    audio_duration: float
-    total_latency: float
+    audio_duration: float       # Duration of synthesized speech (seconds)
+    total_latency: float        # End-to-end: chunk_start → playback_start
+    chunk_start_time: float     # When the first audio sample of this chunk arrived
+    chunk_duration: float       # Duration of the audio chunk sent to ASR
+    asr_time: float             # Time spent in Whisper transcription
+    translation_time: float     # Time spent in MarianMT translation
+    tts_time: float             # Time spent in Piper TTS synthesis
+    queue_depth: int            # Pipeline queue depth when text was submitted
 
 
 class LanguagePipeline:
@@ -159,20 +165,28 @@ class LanguagePipeline:
         if self._audio_output and self._owns_audio_output:
             self._audio_output.stop()
 
-    def process(self, text: str) -> None:
+    def process(self, text: str, chunk_start_time: float = 0.0,
+                chunk_duration: float = 0.0, asr_time: float = 0.0) -> None:
         """
         Queue text for translation and playback.
 
         Args:
             text: English text to translate and speak
+            chunk_start_time: When the audio chunk started accumulating
+            chunk_duration: Duration of the source audio chunk
+            asr_time: Time spent in ASR transcription
         """
         if not text or not text.strip():
             return
 
+        depth = self._queue.qsize()
         try:
-            self._queue.put_nowait((time.time(), text))
+            self._queue.put_nowait((time.time(), text, chunk_start_time, chunk_duration, asr_time, depth))
         except queue.Full:
-            print(f"Warning: {self.config.language_name} queue full, dropping text")
+            logger.warning(
+                "DROP | lang={} | reason=queue_full | queue_depth={} | text={}",
+                self.config.language_code, depth, text[:60]
+            )
 
     def _process_loop(self) -> None:
         """Main processing loop."""
@@ -182,15 +196,17 @@ class LanguagePipeline:
                 if item is None:
                     break
 
-                start_time, text = item
-                self._process_text(text, start_time)
+                start_time, text, chunk_start_time, chunk_duration, asr_time, queue_depth = item
+                self._process_text(text, start_time, chunk_start_time, chunk_duration, asr_time, queue_depth)
 
             except queue.Empty:
                 continue
             except Exception as e:
-                print(f"Pipeline error ({self.config.language_name}): {e}")
+                logger.error("Pipeline error ({}) | {}", self.config.language_name, e)
 
-    def _process_text(self, text: str, start_time: float) -> None:
+    def _process_text(self, text: str, start_time: float, chunk_start_time: float = 0.0,
+                      chunk_duration: float = 0.0, asr_time: float = 0.0,
+                      queue_depth: int = 0) -> None:
         """Process a single text through translation and TTS."""
         # Translate
         translation = self._translator.translate(text)
@@ -202,13 +218,14 @@ class LanguagePipeline:
         if speech.is_empty:
             return
 
+        # Record when playback starts (this is the true end-to-end point)
+        playback_start = time.time()
+        e2e_latency = (playback_start - chunk_start_time) if chunk_start_time > 0 else (playback_start - start_time)
+
         # Play audio
         self._audio_output.play(speech.audio, sample_rate=speech.sample_rate)
 
-        # Calculate latency
-        total_latency = time.time() - start_time
-
-        # Notify callback
+        # Notify callback with full timing breakdown
         if self._on_translation:
             event = TranslationEvent(
                 timestamp=start_time,
@@ -216,7 +233,13 @@ class LanguagePipeline:
                 translated_text=translation.translated_text,
                 target_language=self.config.language_code,
                 audio_duration=speech.duration,
-                total_latency=total_latency,
+                total_latency=e2e_latency,
+                chunk_start_time=chunk_start_time,
+                chunk_duration=chunk_duration,
+                asr_time=asr_time,
+                translation_time=translation.processing_time,
+                tts_time=speech.processing_time,
+                queue_depth=queue_depth,
             )
             self._on_translation(event)
 
@@ -267,12 +290,19 @@ class TranslationCoordinator:
         # State
         self._running = False
         self._callbacks: List[Callable[[TranslationEvent], None]] = []
+        self._session_start: float = 0.0
 
         # Statistics
         self._stats = {
             'transcriptions': 0,
             'translations': 0,
+            'silent_chunks': 0,
+            'dropped': 0,
             'total_latency': 0.0,
+            'total_asr_time': 0.0,
+            'total_translation_time': 0.0,
+            'total_tts_time': 0.0,
+            'forced_emits': 0,
         }
 
     def load(self) -> None:
@@ -367,6 +397,7 @@ class TranslationCoordinator:
         if self._running:
             return
 
+        self._session_start = time.time()
         print("\nStarting translation system...")
 
         # Start audio capture FIRST (USB devices often need input opened before output)
@@ -413,34 +444,68 @@ class TranslationCoordinator:
         if not self._running:
             return
 
-        # Show chunk info
         chunk_duration = chunk.duration
-        print(f"\n--- Chunk received: {chunk_duration:.1f}s ---")
+        queue_depths = {lang: p._queue.qsize() for lang, p in self._pipelines.items()}
+        queue_str = ",".join(f"{l}:{d}" for l, d in queue_depths.items())
+
+        if chunk.emit_reason == "max_duration":
+            self._stats['forced_emits'] += 1
+
+        print(f"\n--- Chunk: {chunk_duration:.1f}s ({chunk.emit_reason}) rms={chunk.peak_rms:.3f} queues=[{queue_str}] ---")
+
+        logger.info(
+            "CHUNK | duration={:.2f}s | emit={} | peak_rms={:.3f} | queues=[{}]",
+            chunk_duration, chunk.emit_reason, chunk.peak_rms, queue_str
+        )
 
         # Transcribe
+        asr_start = time.time()
         result = self._asr.transcribe(chunk.data, chunk.sample_rate)
+        asr_time = time.time() - asr_start
 
         if result.is_empty:
+            self._stats['silent_chunks'] += 1
             print("  (no speech detected)")
+            logger.info(
+                "SILENT | duration={:.2f}s | asr_time={:.3f}s | rms={:.3f} | emit={}",
+                chunk_duration, asr_time, chunk.peak_rms, chunk.emit_reason
+            )
             return
 
         self._stats['transcriptions'] += 1
+        self._stats['total_asr_time'] += asr_time
 
-        # Send to all language pipelines
+        logger.info(
+            "[EN] {} | chunk={:.2f}s | asr={:.3f}s | confidence={:.3f} | lang_prob={:.3f}",
+            result.text, chunk_duration, asr_time,
+            result.segments[0].confidence if result.segments else 0.0,
+            result.language_probability,
+        )
+
+        # Send to all language pipelines with full timing context
         for pipeline in self._pipelines.values():
-            pipeline.process(result.text)
-
-        # Log transcription to file and console
-        logger.info("[EN] {}", result.text)
+            pipeline.process(
+                result.text,
+                chunk_start_time=chunk.chunk_start_time,
+                chunk_duration=chunk_duration,
+                asr_time=asr_time,
+            )
 
     def _on_translation_event(self, event: TranslationEvent) -> None:
         """Handle translation event from pipeline."""
         self._stats['translations'] += 1
         self._stats['total_latency'] += event.total_latency
+        self._stats['total_translation_time'] += event.translation_time
+        self._stats['total_tts_time'] += event.tts_time
 
-        # Log translation to file and console
         lang_upper = event.target_language.upper()
-        logger.info("[{}] {} ({:.2f}s)", lang_upper, event.translated_text, event.total_latency)
+
+        logger.info(
+            "[{}] {} | e2e={:.2f}s | translate={:.3f}s | tts={:.3f}s | audio={:.2f}s | queue_was={}",
+            lang_upper, event.translated_text,
+            event.total_latency, event.translation_time, event.tts_time,
+            event.audio_duration, event.queue_depth,
+        )
 
         # Notify callbacks
         for callback in self._callbacks:
@@ -452,14 +517,25 @@ class TranslationCoordinator:
 
     def get_stats(self) -> dict:
         """Get translation statistics."""
-        avg_latency = 0.0
-        if self._stats['translations'] > 0:
-            avg_latency = self._stats['total_latency'] / self._stats['translations']
+        n = self._stats['translations']
+        avg_latency = self._stats['total_latency'] / n if n > 0 else 0.0
+        t = self._stats['transcriptions']
+        avg_asr = self._stats['total_asr_time'] / t if t > 0 else 0.0
+        avg_translate = self._stats['total_translation_time'] / n if n > 0 else 0.0
+        avg_tts = self._stats['total_tts_time'] / n if n > 0 else 0.0
+        duration = time.time() - self._session_start if self._session_start > 0 else 0.0
 
         return {
-            'transcriptions': self._stats['transcriptions'],
-            'translations': self._stats['translations'],
+            'transcriptions': t,
+            'translations': n,
+            'silent_chunks': self._stats['silent_chunks'],
+            'dropped': self._stats['dropped'],
+            'forced_emits': self._stats['forced_emits'],
             'average_latency': avg_latency,
+            'avg_asr_time': avg_asr,
+            'avg_translation_time': avg_translate,
+            'avg_tts_time': avg_tts,
+            'session_duration': duration,
         }
 
     def _wait_for_queues_to_drain(self, timeout: float = 60.0) -> None:
@@ -538,12 +614,30 @@ class TranslationCoordinator:
             print("\n" + "=" * 60)
             print("Session Statistics")
             print("=" * 60)
-            print(f"  Transcriptions: {stats['transcriptions']}")
-            print(f"  Translations: {stats['translations']}")
-            print(f"  Average latency: {stats['average_latency']:.2f}s")
+            print(f"  Duration:        {stats['session_duration']:.0f}s")
+            print(f"  Chunks:          {stats['transcriptions'] + stats['silent_chunks']} ({stats['silent_chunks']} silent, {stats['forced_emits']} forced)")
+            print(f"  Transcriptions:  {stats['transcriptions']}")
+            print(f"  Translations:    {stats['translations']}")
+            print(f"  Dropped:         {stats['dropped']}")
+            print(f"  Avg e2e latency: {stats['average_latency']:.2f}s")
+            print(f"  Avg ASR time:    {stats['avg_asr_time']:.2f}s")
+            print(f"  Avg translate:   {stats['avg_translation_time']:.2f}s")
+            print(f"  Avg TTS time:    {stats['avg_tts_time']:.2f}s")
             logger.info(
-                "Session ended — transcriptions: {}, translations: {}, avg latency: {:.2f}s",
-                stats['transcriptions'], stats['translations'], stats['average_latency']
+                "SESSION_END | duration={:.0f}s | chunks={} | silent={} | forced={} | "
+                "transcriptions={} | translations={} | dropped={} | "
+                "avg_e2e={:.2f}s | avg_asr={:.2f}s | avg_translate={:.2f}s | avg_tts={:.2f}s",
+                stats['session_duration'],
+                stats['transcriptions'] + stats['silent_chunks'],
+                stats['silent_chunks'],
+                stats['forced_emits'],
+                stats['transcriptions'],
+                stats['translations'],
+                stats['dropped'],
+                stats['average_latency'],
+                stats['avg_asr_time'],
+                stats['avg_translation_time'],
+                stats['avg_tts_time'],
             )
 
     def __enter__(self):
