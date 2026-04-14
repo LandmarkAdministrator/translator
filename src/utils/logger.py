@@ -71,22 +71,22 @@ def setup_logger(
         # Create log directory
         log_path.mkdir(parents=True, exist_ok=True)
 
-        # Main log file
+        # Main log file — one file per run, named by start time
         logger.add(
-            log_path / "translator_{time:YYYY-MM-DD}.log",
+            log_path / "translator_{time:YYYY-MM-DD_HH-mm-ss}.log",
             format=file_format,
             level=log_level,
-            rotation=log_rotation,
+            rotation=None,      # Never rotate mid-run
             retention=log_retention,
             compression="gz",
         )
 
-        # Error-only log file
+        # Error-only log file — one file per run
         logger.add(
-            log_path / "errors_{time:YYYY-MM-DD}.log",
+            log_path / "errors_{time:YYYY-MM-DD_HH-mm-ss}.log",
             format=file_format,
             level="ERROR",
-            rotation=log_rotation,
+            rotation=None,
             retention=log_retention,
             compression="gz",
         )
