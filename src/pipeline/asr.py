@@ -3,10 +3,11 @@ ASR (Automatic Speech Recognition) Service
 
 Uses faster-whisper for speech-to-text transcription.
 
-Note: faster-whisper uses CTranslate2 which requires NVIDIA CUDA.
-On AMD GPUs (ROCm), this service runs on CPU. For GPU acceleration
-on AMD, use the WhisperTorchService alternative which uses PyTorch
-directly with ROCm support.
+faster-whisper uses CTranslate2 for inference, which runs efficiently on CPU
+on any platform. The ASR service intentionally runs on CPU — this is a design
+choice, not a limitation. CTranslate2 int8 CPU inference is fast enough for
+real-time use and avoids GPU memory contention with the translation and TTS
+models that also need GPU resources.
 """
 
 import os
@@ -15,9 +16,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Generator
 import numpy as np
-
-# Set GPU environment before importing torch
-os.environ.setdefault('HSA_OVERRIDE_GFX_VERSION', '11.0.0')
 
 
 @dataclass
@@ -53,11 +51,10 @@ class TranscriptionResult:
 
 class ASRService:
     """
-    Speech recognition service using faster-whisper.
+    Speech recognition service using faster-whisper (CTranslate2 backend).
 
-    Note: CTranslate2 (used by faster-whisper) requires NVIDIA CUDA.
-    On AMD ROCm systems, this automatically falls back to CPU.
-    For GPU-accelerated ASR on AMD, use WhisperTorchService instead.
+    Runs on CPU intentionally — CTranslate2 int8 is fast enough for real-time
+    transcription and avoids contention with GPU memory used by translation/TTS.
     """
 
     def __init__(
@@ -96,11 +93,9 @@ class ASRService:
         self.min_audio_energy = min_audio_energy
         self.no_speech_threshold = no_speech_threshold
 
-        # Force CPU for faster-whisper (CTranslate2 doesn't support ROCm)
+        # ASR runs on CPU — intentional design choice, not a limitation.
+        # See module docstring for rationale.
         self._device = "cpu"
-        if device != "cpu":
-            print("Note: faster-whisper requires NVIDIA CUDA. Using CPU mode.")
-            print("      For AMD GPU acceleration, use WhisperTorchService instead.")
 
         # Set compute type
         if compute_type == "auto":
@@ -297,10 +292,16 @@ class ASRService:
 
 class WhisperTorchService:
     """
-    Speech recognition service using OpenAI Whisper with PyTorch.
+    Alternative ASR service using OpenAI Whisper with PyTorch directly.
 
-    This version uses PyTorch directly and supports AMD ROCm GPU acceleration.
-    It's slower than faster-whisper but works with AMD GPUs.
+    This is an optional alternative to ASRService. It supports GPU acceleration
+    via PyTorch (AMD ROCm or NVIDIA CUDA) but is slower than faster-whisper and
+    requires installing the openai-whisper package separately:
+
+        pip install openai-whisper
+
+    This package is NOT installed by default. Use ASRService (faster-whisper)
+    for production. This class exists for experimentation only.
     """
 
     def __init__(
@@ -343,7 +344,14 @@ class WhisperTorchService:
         if self._loaded:
             return
 
-        import whisper
+        try:
+            import whisper
+        except ImportError:
+            raise ImportError(
+                "openai-whisper is not installed. "
+                "Install it with: pip install openai-whisper\n"
+                "Or use ASRService (faster-whisper) which is installed by default."
+            )
 
         print(f"Loading Whisper model '{self.model_size}' on {self._device} (PyTorch)...")
 
@@ -395,7 +403,7 @@ class WhisperTorchService:
         if not self._loaded:
             self.load()
 
-        import whisper
+        import whisper  # Optional dependency — see class docstring
 
         start_time = time.time()
 

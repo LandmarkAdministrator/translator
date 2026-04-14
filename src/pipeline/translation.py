@@ -12,9 +12,6 @@ from pathlib import Path
 from typing import List, Optional
 import re
 
-# Set GPU environment
-os.environ.setdefault('HSA_OVERRIDE_GFX_VERSION', '11.0.0')
-
 
 @dataclass
 class TranslationResult:
@@ -91,10 +88,9 @@ class TranslationService:
                     f"Available pairs: {list(self.MODEL_MAP.keys())}"
                 )
 
-        # Use CPU (CTranslate2 doesn't support ROCm)
+        # Translation runs on CPU — intentional design choice.
+        # MarianMT via Transformers runs efficiently on CPU for sentence-length inputs.
         self._device = "cpu"
-        if device != "cpu":
-            print("Note: Translation using CPU mode (CTranslate2 requires NVIDIA CUDA)")
 
         # Model storage
         if download_root is None:

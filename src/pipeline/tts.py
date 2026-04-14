@@ -15,9 +15,6 @@ from pathlib import Path
 from typing import Optional, List
 import numpy as np
 
-# Set GPU environment
-os.environ.setdefault('HSA_OVERRIDE_GFX_VERSION', '11.0.0')
-
 
 @dataclass
 class SpeechResult:

@@ -3,7 +3,6 @@ numpy>=1.24.0,<2.0.0
 scipy>=1.10.0
 pyyaml>=6.0.1
 loguru>=0.7.2
-click>=8.1.7
 tqdm>=4.66.1
 
 # Audio processing
@@ -11,8 +10,9 @@ sounddevice>=0.4.6
 soundfile>=0.12.1
 
 # ASR (Speech-to-Text)
+# Note: openai-whisper is NOT needed. faster-whisper replaces it entirely
+# and is faster, smaller, and runs on CPU without CUDA.
 faster-whisper>=1.1.0
-openai-whisper>=20231117
 
 # Translation
 transformers>=4.35.0
@@ -25,19 +25,15 @@ protobuf>=3.20.0
 piper-tts>=1.2.0
 onnxruntime>=1.16.0
 
-# PyTorch with ROCm support (already installed, listed for reference)
-# torch==2.6.0+rocm6.1
-# torchvision==0.21.0+rocm6.1
-# torchaudio==2.6.0+rocm6.1
-# Install with: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.1
+# PyTorch is installed separately by install.sh with the correct GPU backend.
+# Do NOT install torch from this file — the GPU-specific index URL is required.
+# See install.sh or docs/SETUP.md for the correct pip install command.
 
-# IPC and concurrency
+# IPC and utilities
 psutil>=5.9.0
+python-dotenv>=1.0.0
 
-# Testing
+# Development / testing (not required for production)
 pytest>=7.4.3
 pytest-asyncio>=0.21.1
 pytest-cov>=4.1.0
-
-# Additional utilities
-python-dotenv>=1.0.0

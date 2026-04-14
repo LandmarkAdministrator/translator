@@ -11,11 +11,21 @@ Usage:
 
 import os
 import sys
-
-# Set GPU environment FIRST
-os.environ['HSA_OVERRIDE_GFX_VERSION'] = '11.0.0'
-
 from pathlib import Path
+
+# Load ROCm environment variables if present (written by install.sh for AMD iGPUs).
+# This sets HSA_OVERRIDE_GFX_VERSION and PATH for AMD GPUs before any GPU libs load.
+# On NVIDIA or CPU-only systems this file won't exist and nothing is set.
+_env_file = Path(__file__).parent / ".env.rocm"
+if _env_file.exists():
+    with open(_env_file) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if _line.startswith("export "):
+                _line = _line[7:]
+            if "=" in _line and not _line.startswith("#"):
+                _key, _, _val = _line.partition("=")
+                os.environ.setdefault(_key.strip(), _val.strip())
 
 # Add src to path
 PROJECT_ROOT = Path(__file__).parent
@@ -62,14 +72,19 @@ Examples:
 
     # Run setup wizard
     if args.setup:
-        from scripts.setup import main_menu
-        main_menu()
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "setup", PROJECT_ROOT / "scripts" / "setup.py"
+        )
+        setup_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(setup_module)
+        setup_module.main_menu()
         return 0
 
     # Run tests
     if args.test:
         print("Running GPU test...")
-        os.system(f"python {PROJECT_ROOT}/scripts/test_gpu.py")
+        os.execv(sys.executable, [sys.executable, str(PROJECT_ROOT / "scripts" / "test_gpu.py")])
         return 0
 
     # Load saved settings

@@ -17,9 +17,6 @@ from typing import Dict, List, Optional, Callable
 from pathlib import Path
 import numpy as np
 
-# Set GPU environment
-os.environ.setdefault('HSA_OVERRIDE_GFX_VERSION', '11.0.0')
-
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
