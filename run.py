@@ -62,8 +62,8 @@ Examples:
                         help="List available audio devices")
     parser.add_argument("--streaming", action="store_true",
                         help="Use streaming ASR mode (rolling re-transcription, better sentence coherence)")
-    parser.add_argument("--gpu-asr", action="store_true",
-                        help="Run Whisper on GPU (ROCm/CUDA) instead of CPU. Use with large-v3 for best results.")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="Enable DEBUG-level logging on console and in log files.")
 
     args = parser.parse_args()
 
@@ -93,7 +93,7 @@ Examples:
 
     # Set up file logging
     from utils.logger import setup_logger
-    setup_logger(log_dir="logs", log_level="INFO")
+    setup_logger(log_dir="logs", log_level="DEBUG" if args.verbose else "INFO")
 
     # Load saved settings
     from config.settings import load_settings
@@ -179,16 +179,35 @@ Examples:
         asr_model = args.model
         print(f"ASR model (from command line): {asr_model}")
     else:
-        asr_model = config.get("asr_model", "base.en")
+        asr_model = config.get("asr_model", "large-v3")
         print(f"ASR model (from saved config): {asr_model}")
     print("=" * 60)
+
+    # GPU is required — no CPU fallback.  Fail early with a clear reason if
+    # torch can't see a GPU, rather than producing unusable 3x-real-time audio.
+    try:
+        import torch
+    except ImportError as e:
+        print("\nERROR: PyTorch is not installed in this environment.")
+        print(f"  Details: {e}")
+        print("  Run ./install.sh to set up dependencies.")
+        return 1
+    if not torch.cuda.is_available():
+        print("\nERROR: No GPU detected — this project requires a ROCm or CUDA GPU.")
+        print("  torch.cuda.is_available() returned False.  Possible causes:")
+        print("    - PyTorch was installed without GPU support (check with `pip show torch`;")
+        print("      the version should include +rocmX.Y or +cuXY).")
+        print("    - GPU drivers are not loaded (AMD: check `rocminfo`; NVIDIA: `nvidia-smi`).")
+        print("    - Running inside a container or sandbox without GPU passthrough.")
+        print("  Re-run ./install.sh --rocm (AMD) or ./install.sh --cuda (NVIDIA) to repair.")
+        return 1
 
     coordinator = TranslationCoordinator(
         input_device=input_device,
         languages=pipeline_configs,
         asr_model=asr_model,
         streaming=args.streaming,
-        asr_device="cuda" if args.gpu_asr else "cpu",
+        asr_device="cuda",
     )
 
     coordinator.run()

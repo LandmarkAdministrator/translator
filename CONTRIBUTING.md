@@ -46,13 +46,15 @@ To add support for a new language:
 
 1. Find a Helsinki-NLP Opus-MT model for English → your language on [HuggingFace](https://huggingface.co/Helsinki-NLP)
 2. Find a [Piper TTS voice](https://github.com/rhasspy/piper/blob/master/VOICES.md) for your language
-3. Create `config/languages/<code>.yaml` following the pattern in `spanish.yaml`
-4. Test with `python run.py -l <code>`
-5. Submit a pull request
+3. Add the Opus-MT model ID to `TranslationService.MODEL_MAP` in [src/pipeline/translation.py](src/pipeline/translation.py)
+4. Add the Piper voice entry to `VOICE_MAP` in [src/pipeline/tts.py](src/pipeline/tts.py)
+5. Add the language to the `all_languages` list in [scripts/setup.py](scripts/setup.py)
+6. Download models: `python scripts/download_models.py --all`
+7. Test with `python run.py --setup` (enable the new language), then run the pipeline
+8. Submit a pull request
 
 ## Code Style
 
 - Python: follow PEP 8, prefer clarity over cleverness
 - No hard-coded paths or usernames
-- Configuration belongs in `config/`, not in source code
-- Secrets and device names belong in `config/settings.yaml` (gitignored), not committed files
+- Runtime-generated settings belong in `config/settings.yaml` (gitignored) — not committed files

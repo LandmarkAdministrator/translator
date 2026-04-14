@@ -422,12 +422,11 @@ def run_translator(config: Dict, manager: AudioDeviceManager):
     mode_choice = get_choice("Select mode", 2)
     streaming = (mode_choice == 2)
 
-    # Ask about GPU ASR
-    gpu_asr = get_yes_no("\nRun Whisper on GPU? (requires ROCm/CUDA, recommended with large-v3)", default=False)
-    asr_device = "cuda" if gpu_asr else "cpu"
+    # GPU is always used — this project requires a ROCm or CUDA GPU.
+    asr_device = "cuda"
 
     # ASR model from saved config
-    asr_model = config.get("asr_model", "base.en")
+    asr_model = config.get("asr_model", "large-v3")
     print(f"ASR model: {asr_model}  (change with --setup → model config, or --model flag)")
 
     # Create and run coordinator
@@ -476,7 +475,7 @@ def main_menu():
                 channel_str = " [RIGHT]"
             print(f"    {status} {lang['name']} -> {output}{channel_str}")
 
-        asr_model = config.get("asr_model", "base.en")
+        asr_model = config.get("asr_model", "large-v3")
         print(f"  ASR model:  {asr_model}")
 
         options = [
@@ -514,7 +513,7 @@ def main_menu():
             models = ["tiny.en", "base.en", "small.en", "medium.en", "large-v3"]
             print("\nSelect ASR model:")
             for i, m in enumerate(models, 1):
-                current = " (current)" if m == config.get("asr_model", "base.en") else ""
+                current = " (current)" if m == config.get("asr_model", "large-v3") else ""
                 print(f"  {i}. {m}{current}")
             model_choice = get_choice("Choice", len(models))
             config["asr_model"] = models[model_choice - 1]

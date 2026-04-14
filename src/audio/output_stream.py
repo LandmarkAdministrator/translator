@@ -14,6 +14,7 @@ import numpy as np
 import sounddevice as sd
 
 from .device_manager import AudioDeviceManager, AudioDevice
+from .resample import resample_audio  # re-exported for backwards compatibility
 
 
 @dataclass
@@ -44,33 +45,6 @@ def mono_to_stereo_channel(audio: np.ndarray, channel: int) -> np.ndarray:
     stereo = np.zeros((len(audio), 2), dtype=np.float32)
     stereo[:, channel] = audio
     return stereo
-
-
-def resample_audio(audio: np.ndarray, from_rate: int, to_rate: int) -> np.ndarray:
-    """
-    Resample audio from one sample rate to another.
-
-    Args:
-        audio: Input audio array
-        from_rate: Source sample rate
-        to_rate: Target sample rate
-
-    Returns:
-        Resampled audio array
-    """
-    if from_rate == to_rate:
-        return audio
-
-    # Calculate new length
-    duration = len(audio) / from_rate
-    new_length = int(duration * to_rate)
-
-    # Linear interpolation resampling
-    old_indices = np.arange(len(audio))
-    new_indices = np.linspace(0, len(audio) - 1, new_length)
-    resampled = np.interp(new_indices, old_indices, audio)
-
-    return resampled.astype(np.float32)
 
 
 class AudioOutputStream:

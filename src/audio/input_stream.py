@@ -14,31 +14,7 @@ import numpy as np
 import sounddevice as sd
 
 from .device_manager import AudioDeviceManager, AudioDevice
-
-
-def resample_audio(audio: np.ndarray, from_rate: int, to_rate: int) -> np.ndarray:
-    """
-    Resample audio from one sample rate to another.
-
-    Args:
-        audio: Input audio array
-        from_rate: Source sample rate
-        to_rate: Target sample rate
-
-    Returns:
-        Resampled audio array
-    """
-    if from_rate == to_rate:
-        return audio
-
-    duration = len(audio) / from_rate
-    new_length = int(duration * to_rate)
-
-    old_indices = np.arange(len(audio))
-    new_indices = np.linspace(0, len(audio) - 1, new_length)
-    resampled = np.interp(new_indices, old_indices, audio)
-
-    return resampled.astype(np.float32)
+from .resample import resample_audio  # re-exported for backwards compatibility
 
 
 @dataclass
@@ -104,9 +80,7 @@ class CircularAudioBuffer:
         with self._lock:
             if data.ndim > 1:
                 data = data.flatten()
-
-            for sample in data:
-                self._buffer.append(sample)
+            self._buffer.extend(data)
             self._total_samples_received += len(data)
 
     def get_chunk(
@@ -418,9 +392,10 @@ class AudioInputStream:
     def _process_loop(self) -> None:
         """Background thread for processing audio chunks."""
         while not self._stop_event.is_set():
-            # Check for ready chunks
+            # Only pop chunks when callbacks are registered — otherwise leave them
+            # in _ready_chunks so manual get_chunk() polling still works.
             chunk = None
-            if self._ready_chunks:
+            if self._callbacks and self._ready_chunks:
                 try:
                     chunk = self._ready_chunks.popleft()
                 except IndexError:
@@ -431,9 +406,13 @@ class AudioInputStream:
                     try:
                         callback(chunk)
                     except Exception:
-                        pass  # Log error but continue
+                        from loguru import logger
+                        logger.exception(
+                            "Audio callback {!r} raised",
+                            getattr(callback, "__name__", repr(callback)),
+                        )
             else:
-                time.sleep(0.05)  # Short sleep when no chunks ready
+                time.sleep(0.05)  # Short sleep when idle or waiting for chunks
 
     def start(self) -> None:
         """Start capturing audio."""
@@ -463,13 +442,14 @@ class AudioInputStream:
         )
         self._stream.start()
 
-        # Start processing thread if we have callbacks
-        if self._callbacks:
-            self._process_thread = threading.Thread(
-                target=self._process_loop,
-                daemon=True,
-            )
-            self._process_thread.start()
+        # Always start the processing thread so add_callback() works after start().
+        # The loop is cheap when no callbacks are registered — it just drains
+        # _ready_chunks and sleeps.
+        self._process_thread = threading.Thread(
+            target=self._process_loop,
+            daemon=True,
+        )
+        self._process_thread.start()
 
         self._running = True
 

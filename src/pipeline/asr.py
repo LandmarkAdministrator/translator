@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import List, Optional, Generator, Tuple
 import numpy as np
 
+from audio.resample import resample_audio
+
 
 @dataclass
 class TranscriptionSegment:
@@ -60,13 +62,14 @@ class ASRService:
     """
     Speech recognition service using faster-whisper (CTranslate2 backend).
 
-    Runs on CPU intentionally — CTranslate2 int8 is fast enough for real-time
-    transcription and avoids contention with GPU memory used by translation/TTS.
+    Historically this was the CPU path; the live program no longer uses CPU
+    ASR (GPU is required).  Kept as a possible future NVIDIA-CUDA route
+    (see TODO.md / FIX 14) and for programmatic / unit-test access.
     """
 
     def __init__(
         self,
-        model_size: str = "base.en",
+        model_size: str = "large-v3",
         language: str = "en",
         device: str = "cpu",  # "cpu" or "cuda" (ROCm uses cuda compat layer)
         compute_type: str = "auto",
@@ -196,12 +199,9 @@ class ASRService:
         if audio.dtype != np.float32:
             audio = audio.astype(np.float32)
 
-        # Resample if needed
+        # Resample if needed (anti-aliased polyphase filter)
         if sample_rate != 16000:
-            ratio = 16000 / sample_rate
-            new_length = int(len(audio) * ratio)
-            indices = np.linspace(0, len(audio) - 1, new_length)
-            audio = np.interp(indices, np.arange(len(audio)), audio)
+            audio = resample_audio(audio, sample_rate, 16000)
 
         audio_duration = len(audio) / 16000
 
@@ -413,10 +413,7 @@ class WhisperTransformersService:
             audio = audio.astype(np.float32)
 
         if sample_rate != 16000:
-            ratio = 16000 / sample_rate
-            new_length = int(len(audio) * ratio)
-            indices = np.linspace(0, len(audio) - 1, new_length)
-            audio = np.interp(indices, np.arange(len(audio)), audio).astype(np.float32)
+            audio = resample_audio(audio, sample_rate, 16000)
 
         audio_duration = len(audio) / 16000
 
@@ -507,20 +504,32 @@ class WhisperTransformersService:
         Return True if the text looks like a Whisper hallucination loop.
 
         Two heuristics:
-        - Word dominance: a single word makes up >40% of output OR appears >6 times.
-          (catches "oh oh oh oh..." and "thank you thank you...")
+        - Content-word dominance: ignoring stopwords, a single word makes up >40%
+          of content OR appears >6 times (catches "oh oh oh" and "thank you thank you").
         - Trigram loop: any 3-word phrase repeats more than 3 times.
           (catches "out of the road out of the road...")
         """
         from collections import Counter
+        STOPWORDS = {
+            'the', 'a', 'an', 'and', 'or', 'but', 'of', 'to', 'in', 'on', 'at', 'for',
+            'with', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'am',
+            'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them',
+            'my', 'your', 'his', 'our', 'their', 'this', 'that', 'these', 'those',
+            'as', 'by', 'from', 'so', 'if', 'not', 'no', 'do', 'does', 'did',
+            'have', 'has', 'had',
+        }
         words = text.lower().split()
         if not words:
             return False
 
-        counts = Counter(words)
-        top_word, top_count = counts.most_common(1)[0]
-        if top_count > 6 or top_count > len(words) * 0.40:
-            return True
+        content_words = [w.strip(".,!?;:'\"") for w in words]
+        content_words = [w for w in content_words if w and w not in STOPWORDS]
+
+        if content_words:
+            counts = Counter(content_words)
+            top_word, top_count = counts.most_common(1)[0]
+            if top_count > 6 or top_count > len(content_words) * 0.40:
+                return True
 
         if len(words) >= 9:
             trigrams = [tuple(words[i:i + 3]) for i in range(len(words) - 2)]
@@ -710,24 +719,59 @@ class StreamingASRBuffer:
 
     @staticmethod
     def _word_start_time(result: "TranscriptionResult", word_idx: int) -> float:
-        """Segment start time that contains the word at word_idx."""
+        """
+        Estimated start time (in seconds) of the word at ``word_idx``.
+
+        When ASR backends populate per-word timestamps on each segment's
+        ``words`` list, use those directly.  Otherwise interpolate linearly
+        within the containing segment — much closer to reality than returning
+        the segment boundary for every word (which over-trims the audio buffer
+        and misdates committed text).
+        """
         count = 0
         for seg in result.segments:
-            words_in_seg = len(seg.text.strip().split())
-            if count + words_in_seg > word_idx:
-                return seg.start
-            count += words_in_seg
-        return result.segments[0].start if result.segments else 0.0
+            seg_words = seg.text.strip().split()
+            n = len(seg_words)
+            if n == 0:
+                continue
+            if count + n > word_idx:
+                local = word_idx - count
+                if seg.words and local < len(seg.words):
+                    w = seg.words[local]
+                    wstart = w.get('start') if isinstance(w, dict) else getattr(w, 'start', None)
+                    if wstart is not None:
+                        return float(wstart)
+                # Linear interpolation within the segment
+                frac = local / n
+                return seg.start + frac * (seg.end - seg.start)
+            count += n
+        return result.segments[-1].end if result.segments else 0.0
 
     @staticmethod
     def _word_end_time(result: "TranscriptionResult", word_idx: int) -> float:
-        """Segment end time that contains the word at word_idx."""
+        """
+        Estimated end time (in seconds) of the word at ``word_idx``.
+
+        Uses per-word timestamps if present, otherwise linear interpolation
+        within the containing segment.
+        """
         count = 0
         for seg in result.segments:
-            words_in_seg = len(seg.text.strip().split())
-            count += words_in_seg
-            if count > word_idx:
-                return seg.end
+            seg_words = seg.text.strip().split()
+            n = len(seg_words)
+            if n == 0:
+                continue
+            if count + n > word_idx:
+                local = word_idx - count
+                if seg.words and local < len(seg.words):
+                    w = seg.words[local]
+                    wend = w.get('end') if isinstance(w, dict) else getattr(w, 'end', None)
+                    if wend is not None:
+                        return float(wend)
+                # Linear interpolation: end of the (local+1)-th word in segment
+                frac = (local + 1) / n
+                return seg.start + frac * (seg.end - seg.start)
+            count += n
         return result.segments[-1].end if result.segments else 0.0
 
 
@@ -747,7 +791,7 @@ class WhisperTorchService:
 
     def __init__(
         self,
-        model_size: str = "base.en",
+        model_size: str = "large-v3",
         language: str = "en",
         device: str = "auto",
         download_root: Optional[str] = None,
@@ -852,12 +896,9 @@ class WhisperTorchService:
         if audio.dtype != np.float32:
             audio = audio.astype(np.float32)
 
-        # Resample if needed
+        # Resample if needed (anti-aliased polyphase filter)
         if sample_rate != 16000:
-            ratio = 16000 / sample_rate
-            new_length = int(len(audio) * ratio)
-            indices = np.linspace(0, len(audio) - 1, new_length)
-            audio = np.interp(indices, np.arange(len(audio)), audio)
+            audio = resample_audio(audio, sample_rate, 16000)
 
         audio_duration = len(audio) / 16000
 

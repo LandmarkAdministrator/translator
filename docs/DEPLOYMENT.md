@@ -284,19 +284,12 @@ echo "Deployment complete. Configure audio devices on target system."
 Audio device indices vary between systems. After deployment:
 
 ```bash
-# Discover devices on new system
+# Discover devices on the new system
 python run.py --list-devices
 
-# Update preset with correct device indices
-nano config/presets/default.yaml
-```
-
-### Create Location Preset
-
-```bash
+# Re-run the interactive setup to select the correct input/output devices.
+# This writes config/settings.yaml.
 python run.py --setup
-# Configure devices interactively
-# Save as new preset
 ```
 
 ### Environment Variables
@@ -375,8 +368,8 @@ rm -rf translator.old
 mv translator translator.old
 tar -xzf translator-full-new.tar.gz -C translator/
 
-# Restore config
-cp -r translator.old/config/presets/* translator/config/presets/
+# Restore saved settings (device names, enabled languages, ASR model)
+cp translator.old/config/settings.yaml translator/config/settings.yaml
 
 # Reinstall
 cd translator
@@ -396,8 +389,7 @@ Priority files for backup:
 
 ```bash
 # Essential (small)
-config/                 # All configuration
-config/presets/         # Custom presets
+config/settings.yaml    # Device names, enabled languages, ASR model
 
 # Large but replaceable
 models/                 # Can re-download
@@ -466,7 +458,7 @@ mkdir -p offline_packages
 # Download Python packages
 pip download -d offline_packages/ -r requirements.txt
 pip download -d offline_packages/ torch torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/rocm6.2  # or cu124/cpu
+    --index-url https://download.pytorch.org/whl/rocm7.2  # or cu124/cpu
 
 # Download models
 python scripts/download_models.py --all
@@ -492,8 +484,10 @@ cd /home/$USER
 tar -xzf translator-offline.tar.gz -C translator/
 cd translator
 
-# Install system deps (requires local apt mirror or DVD)
-./install.sh --system-deps-only
+# Install system deps manually from your local apt mirror or DVD
+# (the package list is in install.sh — see the `apt-get install` block)
+sudo apt-get install -y python3 python3-venv python3-pip portaudio19-dev \
+    libsndfile1 ffmpeg espeak-ng libxml2 libopenblas-dev
 
 # Install Python packages from local cache
 python3 -m venv venv
@@ -550,7 +544,7 @@ nvidia-smi
 # Reinstall GPU packages
 source venv/bin/activate
 pip uninstall torch torchvision torchaudio
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.3
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
 ```
 
 **Note:** Always use the latest ROCm version for best performance. ROCm 7.x+ is **required** for integrated GPUs (680M, 780M, 890M).
@@ -561,9 +555,9 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 # Re-run device discovery
 python run.py --list-devices
 
-# Update preset
+# Reconfigure devices / languages interactively
 python run.py --setup
 
-# Or edit config directly
-nano config/presets/default.yaml
+# Or edit the settings file directly
+nano config/settings.yaml
 ```

@@ -141,8 +141,8 @@ class ASRProcess:
 
     def __init__(
         self,
-        model_size: str = "base.en",
-        device: str = "cpu",
+        model_size: str = "large-v3",
+        device: str = "cuda",
         language: str = "en",
         download_root: Optional[str] = None,
     ):

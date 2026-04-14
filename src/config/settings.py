@@ -30,7 +30,7 @@ DEFAULT_SETTINGS = {
             "enabled": True,
         },
     ],
-    "asr_model": "base.en",
+    "asr_model": "large-v3",
 }
 
 
@@ -101,18 +101,10 @@ class SettingsManager:
             print(f"Error saving settings: {e}")
 
     def _merge_defaults(self, settings: Dict[str, Any]) -> Dict[str, Any]:
-        """Merge settings with defaults for any missing keys."""
+        """Merge settings with defaults — user values override, unknown keys preserved."""
         result = DEFAULT_SETTINGS.copy()
-
-        if "input_device" in settings:
-            result["input_device"] = settings["input_device"]
-
-        if "languages" in settings:
-            result["languages"] = settings["languages"]
-
-        if "asr_model" in settings:
-            result["asr_model"] = settings["asr_model"]
-
+        if settings:
+            result.update(settings)
         return result
 
     @property
@@ -140,7 +132,7 @@ class SettingsManager:
 
     def get_asr_model(self) -> str:
         """Get the ASR model size."""
-        return self.settings.get("asr_model", "base.en")
+        return self.settings.get("asr_model", "large-v3")
 
     def set_asr_model(self, model: str) -> None:
         """Set the ASR model size."""

@@ -6,11 +6,13 @@
 # GPU: AMD ROCm 7.x+ (required for iGPUs), NVIDIA CUDA 12.x+, or CPU-only
 #
 # Usage:
-#   ./install.sh              # Interactive install
+#   ./install.sh              # Interactive install (requires a GPU)
 #   ./install.sh --rocm       # Force AMD ROCm installation
 #   ./install.sh --cuda       # Force NVIDIA CUDA installation
-#   ./install.sh --cpu        # CPU-only installation
 #   ./install.sh --help       # Show help
+#
+# Note: CPU-only installation is not supported — the translator requires
+# a ROCm or CUDA GPU to run in real time.
 #
 
 set -e
@@ -551,8 +553,8 @@ detect_pytorch_rocm_version() {
         log "Detected latest PyTorch ROCm wheel: $pytorch_rocm"
         echo "$pytorch_rocm"
     else
-        warn "Could not detect latest PyTorch ROCm wheel version, using rocm6.3 fallback"
-        echo "rocm6.3"
+        warn "Could not detect latest PyTorch ROCm wheel version, using rocm7.2 fallback"
+        echo "rocm7.2"
     fi
 }
 
@@ -744,7 +746,7 @@ download_models() {
     else
         # Fallback: download models manually
         log "Downloading Whisper model..."
-        venv_python python -c "from faster_whisper import WhisperModel; WhisperModel('base.en', device='cpu', download_root='$INSTALL_DIR/models/asr')"
+        venv_python python -c "from faster_whisper import WhisperModel; WhisperModel('large-v3', device='cpu', download_root='$INSTALL_DIR/models/asr')"
 
         log "Downloading translation models..."
         venv_python python -c "from transformers import MarianMTModel, MarianTokenizer; MarianMTModel.from_pretrained('Helsinki-NLP/opus-mt-en-es', cache_dir='$INSTALL_DIR/models/translation'); MarianTokenizer.from_pretrained('Helsinki-NLP/opus-mt-en-es', cache_dir='$INSTALL_DIR/models/translation')"
@@ -923,7 +925,6 @@ Usage: $0 [OPTIONS]
 Options:
   --rocm          Force AMD ROCm GPU backend
   --cuda          Force NVIDIA CUDA GPU backend
-  --cpu           CPU-only installation (no GPU acceleration)
   --dir PATH      Install to specified directory (default: repo directory)
   --skip-models   Skip downloading AI models
   --skip-service  Skip systemd service installation
@@ -954,10 +955,6 @@ main() {
                 ;;
             --cuda)
                 FORCE_GPU="cuda"
-                shift
-                ;;
-            --cpu)
-                FORCE_GPU="cpu"
                 shift
                 ;;
             --dir)
@@ -999,7 +996,7 @@ main() {
     detect_gpu
     detect_amd_gpu_arch
 
-    # Determine GPU backend
+    # Determine GPU backend — GPU is required; abort if none found.
     if [[ -n "$FORCE_GPU" ]]; then
         GPU_BACKEND="$FORCE_GPU"
     else
@@ -1011,7 +1008,9 @@ main() {
                 GPU_BACKEND="cuda"
                 ;;
             *)
-                GPU_BACKEND="cpu"
+                error "No GPU detected.  This project requires a ROCm (AMD) or CUDA (NVIDIA) GPU."
+                error "If you know you have a GPU but auto-detect failed, re-run with --rocm or --cuda."
+                exit 1
                 ;;
         esac
     fi

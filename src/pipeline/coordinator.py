@@ -260,10 +260,10 @@ class TranslationCoordinator:
         self,
         input_device: str = "default",
         languages: List[PipelineConfig] = None,
-        asr_model: str = "base.en",
+        asr_model: str = "large-v3",
         models_dir: Optional[str] = None,
         streaming: bool = False,
-        asr_device: str = "cpu",
+        asr_device: str = "cuda",
     ):
         self._input_device = input_device
         self._asr_model = asr_model
@@ -524,8 +524,6 @@ class TranslationCoordinator:
         if chunk.emit_reason == "max_duration":
             self._stats['forced_emits'] += 1
 
-        print(f"\n--- Chunk: {chunk_duration:.1f}s ({chunk.emit_reason}) rms={chunk.peak_rms:.3f} queues=[{queue_str}] ---")
-
         logger.info(
             "CHUNK | duration={:.2f}s | emit={} | peak_rms={:.3f} | queues=[{}]",
             chunk_duration, chunk.emit_reason, chunk.peak_rms, queue_str
@@ -547,7 +545,6 @@ class TranslationCoordinator:
                 "DROP | reason=asr_queue_full | duration={:.2f}s | rms={:.3f}",
                 chunk_duration, chunk.peak_rms,
             )
-            print("  (ASR queue full — chunk dropped)")
 
     def _asr_result_loop(self) -> None:
         """
@@ -569,7 +566,6 @@ class TranslationCoordinator:
 
             if transcription.is_empty:
                 self._stats['silent_chunks'] += 1
-                print("  (no speech detected)")
                 logger.info(
                     "SILENT | duration={:.2f}s | asr_time={:.3f}s | rms={:.3f} | emit={}",
                     chunk_duration, asr_time, meta.peak_rms, meta.emit_reason,
@@ -589,7 +585,6 @@ class TranslationCoordinator:
                     else 0.0
                 )
 
-                print(f"  [EN] {seg.text}  [{seg.start:.1f}s–{seg.end:.1f}s conf={seg.confidence:.2f}]")
                 logger.info(
                     "[EN] {} | chunk={:.2f}s | seg={:.2f}-{:.2f}s | asr={:.3f}s | confidence={:.3f} | lang_prob={:.3f}",
                     seg.text, chunk_duration, seg.start, seg.end, asr_time,
@@ -622,7 +617,6 @@ class TranslationCoordinator:
         self._stats['transcriptions'] += 1
         self._stats['total_asr_time'] += asr_time
 
-        print(f"\n  [EN/stream] {new_text}")
         logger.info(
             "[EN] {} | mode=streaming | asr={:.3f}s",
             new_text, asr_time,
@@ -813,7 +807,7 @@ def main():
 
     parser = argparse.ArgumentParser(description="Church Audio Translator")
     parser.add_argument("--input", "-i", default="default", help="Input audio device")
-    parser.add_argument("--model", "-m", default="base.en", help="ASR model size")
+    parser.add_argument("--model", "-m", default="large-v3", help="ASR model size")
     parser.add_argument("--languages", "-l", nargs="+", default=["es", "ht"],
                         help="Target languages")
     args = parser.parse_args()
