@@ -212,8 +212,11 @@ class AudioInputStream:
         if self._device is None:
             raise ValueError(f"Could not find input device: {device}")
 
-        # Find a supported sample rate for capture
-        self._native_sample_rate = self._find_supported_sample_rate(sample_rate)
+        # Find a supported (sample_rate, channels) combo for capture.
+        # Some USB interfaces (e.g. Mackie Onyx Producer) are stereo-only and
+        # refuse channels=1 entirely. In that case we open at the device's
+        # native channel count and downmix to mono in _audio_callback.
+        self._native_sample_rate, self._capture_channels = self._find_supported_input_settings(sample_rate)
 
         # Create buffer at TARGET sample rate (after resampling)
         self._buffer = CircularAudioBuffer(
@@ -246,29 +249,37 @@ class AudioInputStream:
         # Queue for ready chunks
         self._ready_chunks: Deque[AudioChunk] = deque()
 
-    def _find_supported_sample_rate(self, preferred: int) -> int:
-        """Find a supported sample rate for the device.
+    def _find_supported_input_settings(self, preferred: int) -> tuple[int, int]:
+        """Find a supported (sample_rate, channels) pair for the device.
 
-        Tries device default first for better compatibility with USB devices
-        that require matching sample rates for full-duplex operation.
+        Tries the requested channel count first; if every sample rate fails,
+        falls back to the device's max_input_channels (e.g. stereo-only USB
+        interfaces that reject channels=1 on their hw: node). The stream
+        callback downmixes multi-channel capture to mono.
         """
-        # Try device default first (best for USB full-duplex), then preferred, then common rates
         device_default = int(self._device.default_sample_rate)
         rates_to_try = [device_default, preferred] + [r for r in self.SAMPLE_RATES if r not in (device_default, preferred)]
 
-        for rate in rates_to_try:
-            try:
-                sd.check_input_settings(
-                    device=self._device.index,
-                    samplerate=rate,
-                    channels=self.channels,
-                )
-                return rate
-            except Exception:
-                continue
+        dev_max_in = int(getattr(self._device, 'max_input_channels', 0) or 0)
+        # Preferred channels first, then device-native as fallback
+        channels_to_try = [self.channels]
+        if dev_max_in > 0 and dev_max_in != self.channels:
+            channels_to_try.append(dev_max_in)
 
-        # Fall back to device default
-        return device_default
+        for ch in channels_to_try:
+            for rate in rates_to_try:
+                try:
+                    sd.check_input_settings(
+                        device=self._device.index,
+                        samplerate=rate,
+                        channels=ch,
+                    )
+                    return rate, ch
+                except Exception:
+                    continue
+
+        # Nothing validated — fall back to device native settings
+        return device_default, max(dev_max_in, self.channels, 1)
 
     @property
     def device(self) -> AudioDevice:
@@ -430,11 +441,13 @@ class AudioInputStream:
             self._chunk_peak_rms = 0.0
         self._ready_chunks.clear()
 
-        # Create and start the audio stream at NATIVE rate
+        # Create and start the audio stream at NATIVE rate.
+        # _capture_channels may differ from self.channels (see
+        # _find_supported_input_settings); _audio_callback downmixes.
         self._stream = sd.InputStream(
             device=self._device.index,
             samplerate=self._native_sample_rate,
-            channels=self.channels,
+            channels=self._capture_channels,
             dtype=np.float32,
             callback=self._audio_callback,
             blocksize=int(self._native_sample_rate * 0.25),  # 250ms blocks

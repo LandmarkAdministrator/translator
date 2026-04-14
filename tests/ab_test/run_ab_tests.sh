@@ -49,6 +49,21 @@ TESTS=(
 )
 
 ssh_r() { ssh "${SSH_OPTS[@]}" "$REMOTE_USER@$REMOTE_HOST" "$@"; }
+ssh_rf() { ssh -f "${SSH_OPTS[@]}" "$REMOTE_USER@$REMOTE_HOST" "$@"; }
+
+# Kill any running translator on remote. We can't use `pkill -f run.py` because
+# the ssh-invoked remote shell's own cmdline contains "run.py" → self-kill (exit 255).
+# Filter by comm=python so only actual python processes match.
+remote_kill_translator() {
+    ssh_r '
+        pids=$(ps -eo pid,comm,args --no-headers | awk "\$2==\"python\" && /run\.py/ {print \$1}")
+        if [ -n "$pids" ]; then
+            kill -INT $pids 2>/dev/null || true
+            sleep 3
+            kill -9 $pids 2>/dev/null || true
+        fi
+    '
+}
 
 timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
 hms() { printf '%02d:%02d:%02d' $(( $1 / 3600 )) $(( ($1 % 3600) / 60 )) $(( $1 % 60 )); }
@@ -113,19 +128,26 @@ for test in "${TESTS[@]}"; do
     echo "######################################################################"
 
     # 1. Kill leftovers on remote (anything calling run.py)
-    ssh_r "pkill -f 'run\\.py' 2>/dev/null; sleep 2" || true
+    remote_kill_translator
 
-    # 2. Launch translator on remote
+    # 2. Launch translator on remote.
+    # Use `ssh -f` so SSH returns immediately after auth; plain `ssh "... & disown"`
+    # hangs because SSH holds the channel open until remote stdio fds close.
     log "Launching translator on remote (mode=$mode)..."
-    ssh_r "
-        cd ~/translator && \
-        nohup venv/bin/python run.py $flags > /tmp/translator_run${run}.out 2>&1 < /dev/null & \
-        echo \$! > /tmp/translator.pid
-        disown
-    "
-    sleep 2
-    REMOTE_PID=$(ssh_r "cat /tmp/translator.pid 2>/dev/null")
+    ssh_rf "cd ~/translator && nohup venv/bin/python run.py $flags > /tmp/translator_run${run}.out 2>&1 < /dev/null &"
+    sleep 5
+
+    # Discover actual python PID. Filtering by comm=python avoids matching the
+    # bash wrapper whose cmdline literally contains "python run.py".
+    REMOTE_PID=$(ssh_r 'ps -eo pid,comm,args --no-headers | awk "\$2==\"python\" && /run\.py/ {print \$1; exit}"')
     log "  Remote PID: ${REMOTE_PID:-UNKNOWN}"
+    if [ -z "$REMOTE_PID" ]; then
+        log "  ERROR: translator failed to start. Last output:"
+        ssh_r "tail -30 /tmp/translator_run${run}.out"
+        log "  Skipping run $run"
+        sleep "$INTERRUN_SEC"
+        continue
+    fi
 
     # 3. Warmup
     log "Warmup ${WARMUP_SEC}s..."
