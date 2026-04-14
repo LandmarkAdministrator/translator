@@ -446,6 +446,8 @@ class WhisperTransformersService:
                 generate_kwargs=generate_kwargs,
             )
         except Exception as e:
+            from loguru import logger as _log
+            _log.error("TRANSFORMERS_ERROR | model={} | error={}", self.model_size, e)
             print(f"  [ASR ERROR] WhisperTransformers failed: {e}")
             processing_time = time.time() - start_time
             return TranscriptionResult(
@@ -456,10 +458,17 @@ class WhisperTransformersService:
 
         full_text = result.get("text", "").strip()
 
+        if not full_text:
+            from loguru import logger as _log
+            _log.info("TRANSFORMERS_EMPTY | model={} | asr={:.3f}s | audio_dur={:.2f}s",
+                      self.model_size, time.time() - start_time, audio_duration)
+
         # Hallucination filter: discard results where a single word or trigram repeats
         # excessively (model loops on applause/noise instead of producing real speech)
         if full_text and self._is_hallucination(full_text):
-            preview = full_text[:80] + ("..." if len(full_text) > 80 else "")
+            from loguru import logger as _log
+            preview = full_text[:120] + ("..." if len(full_text) > 120 else "")
+            _log.info("HALLUCINATION_FILTERED | model={} | text={}", self.model_size, preview)
             print(f"  [HALLUCINATION FILTERED] {preview}")
             processing_time = time.time() - start_time
             return TranscriptionResult(
@@ -467,6 +476,10 @@ class WhisperTransformersService:
                 language_probability=1.0, duration=audio_duration,
                 processing_time=processing_time,
             )
+
+        if full_text:
+            from loguru import logger as _log
+            _log.info("TRANSFORMERS_RAW | model={} | text={}", self.model_size, full_text[:200])
 
         chunks = result.get("chunks", [])
 
