@@ -105,9 +105,9 @@ sudo reboot
 sudo apt install -y \
     python3 python3-venv python3-pip python3-dev \
     git curl wget \
-    libsndfile1 portaudio19-dev \
+    libsndfile1 libsoundio-dev portaudio19-dev libasound2-dev \
     ffmpeg \
-    pipewire pipewire-alsa wireplumber \
+    pipewire pipewire-alsa pipewire-pulse wireplumber \
     build-essential
 ```
 
@@ -135,7 +135,7 @@ pip install --upgrade pip wheel setuptools
 
 For AMD ROCm:
 ```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.3
 pip install -r requirements.txt
 ```
 
@@ -172,9 +172,9 @@ wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | \
   gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
 
 # Check latest version at https://repo.radeon.com/rocm/apt/
-# Replace VERSION with the latest (e.g., 6.3.2, 7.0, etc.)
-ROCM_VERSION="6.3.2"  # Update to latest
-echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VERSION} bookworm main" | \
+# Replace VERSION with the latest (e.g., 7.0, 7.1, etc.)
+ROCM_VERSION="7.0"  # Update to latest available
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VERSION} trixie main" | \
   sudo tee /etc/apt/sources.list.d/rocm.list
 
 sudo apt update
@@ -184,7 +184,8 @@ sudo apt install -y rocm-hip-runtime rocm-hip-sdk rocm-libs
 sudo usermod -aG render,video $USER
 ```
 
-The install script automatically detects the latest available ROCm version.
+> **Note:** The install script (`./install.sh`) automatically detects the latest available
+> ROCm version and correct Debian codename — the manual steps above are for reference only.
 
 **Important:** Log out and back in after adding groups.
 
@@ -223,16 +224,19 @@ GPU Architecture Reference:
 ### NVIDIA CUDA Setup
 
 ```bash
-# Add NVIDIA repository
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | \
-  sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+# Enable non-free repos (required for nvidia-driver on Debian)
+sudo sed -i 's/main$/main contrib non-free non-free-firmware/' /etc/apt/sources.list
+sudo apt update
 
-# Install CUDA toolkit
-sudo apt install -y nvidia-driver nvidia-cuda-toolkit
+# Install the kernel driver only — PyTorch bundles its own CUDA runtime
+sudo apt install -y nvidia-driver firmware-misc-nonfree
 
 # Reboot to load driver
 sudo reboot
 ```
+
+> **Note:** Do not install `nvidia-cuda-toolkit` from apt. PyTorch ships its own CUDA
+> runtime inside the pip wheel, so only the kernel driver is needed.
 
 #### Verify CUDA Installation
 

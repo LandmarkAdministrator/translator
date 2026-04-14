@@ -6,7 +6,7 @@ Built for congregations that serve speakers of multiple languages. Runs entirely
 
 ## Features
 
-- **Real-time** — English speech translated and spoken within 1–2 seconds
+- **Real-time** — Low-latency English speech translation (speed depends on hardware)
 - **Simultaneous** — Multiple languages at once (Spanish + Haitian Creole out of the box)
 - **Stereo channel split** — Two languages on one stereo output (Spanish left / Haitian Creole right)
 - **GPU accelerated** — AMD ROCm or NVIDIA CUDA (2–3x faster than CPU)

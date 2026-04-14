@@ -46,10 +46,6 @@ Creates a complete package including all models (~8GB):
 ```bash
 cd /home/$USER/translator
 
-# Create deployment package
-./install.sh --create-package
-
-# Or manually:
 tar -czf translator-full.tar.gz \
     --exclude='venv' \
     --exclude='.venv' \
@@ -113,7 +109,7 @@ scp translator-full.tar.gz user@target:/home/user/
 wget https://your-server/translator-full.tar.gz
 
 # Option C: Clone from git (internet required)
-git clone <repository-url> translator
+git clone https://github.com/LandmarkAdministrator/translator.git translator
 ```
 
 ### Step 3: Extract and Install
@@ -190,10 +186,8 @@ tar -xzf translator-clone.tar.gz
 
 cd translator
 
-# Install system dependencies only (skip Python packages)
-./install.sh --system-deps-only
-
-# If same GPU type, just verify
+# Install system dependencies and verify GPU
+# (The venv and models are already included in the clone)
 source venv/bin/activate
 python run.py --test
 
@@ -556,7 +550,7 @@ nvidia-smi
 # Reinstall GPU packages
 source venv/bin/activate
 pip uninstall torch torchvision torchaudio
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.3
 ```
 
 **Note:** Always use the latest ROCm version for best performance. ROCm 7.x+ is **required** for integrated GPUs (680M, 780M, 890M).
