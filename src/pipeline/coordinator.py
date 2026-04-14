@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from audio.input_stream import AudioInputStream, AudioChunk
 from audio.output_stream import AudioOutputStream, SharedStereoOutput, ChannelOutputProxy
 from pipeline.asr import ASRService, WhisperTransformersService, StreamingASRBuffer, TranscriptionResult
+from pipeline.asr_process import ASRProcess, ASRChunkMeta
 from pipeline.translation import TranslationService, TranslationResult
 from pipeline.tts import TTSService, SpeechResult
 
@@ -289,6 +290,8 @@ class TranslationCoordinator:
         # Components
         self._audio_input: Optional[AudioInputStream] = None
         self._asr: Optional[ASRService] = None
+        self._asr_proc: Optional[ASRProcess] = None          # batch-mode subprocess
+        self._asr_result_thread: Optional[threading.Thread] = None
         self._pipelines: Dict[str, LanguagePipeline] = {}
         self._shared_outputs: Dict[str, SharedStereoOutput] = {}  # device -> shared output
 
@@ -316,23 +319,39 @@ class TranslationCoordinator:
         print("Loading Translation Coordinator")
         print("=" * 60)
 
-        # Load ASR — use transformers (PyTorch ROCm) for GPU, CTranslate2 for CPU
+        # Load ASR — use transformers (PyTorch ROCm) for GPU, CTranslate2 for CPU.
+        # Streaming: direct ASR on the same thread (low-latency rolling re-transcription).
+        # Batch:     ASR subprocess with its own GIL — audio callback never stalls.
         print("\nLoading ASR service...")
-        if self._asr_device == "cuda":
-            self._asr = WhisperTransformersService(
-                model_size=self._asr_model,
-                language="en",
-                device="cuda",
-                download_root=f"{self._models_dir}/asr/transformers",
-            )
+        if self._streaming:
+            if self._asr_device == "cuda":
+                self._asr = WhisperTransformersService(
+                    model_size=self._asr_model,
+                    language="en",
+                    device="cuda",
+                    download_root=f"{self._models_dir}/asr/transformers",
+                )
+            else:
+                self._asr = ASRService(
+                    model_size=self._asr_model,
+                    language="en",
+                    device="cpu",
+                    download_root=f"{self._models_dir}/asr",
+                )
+            self._asr.load()
         else:
-            self._asr = ASRService(
-                model_size=self._asr_model,
-                language="en",
-                device="cpu",
-                download_root=f"{self._models_dir}/asr",
+            download_root = (
+                f"{self._models_dir}/asr/transformers"
+                if self._asr_device == "cuda"
+                else f"{self._models_dir}/asr"
             )
-        self._asr.load()
+            self._asr_proc = ASRProcess(
+                model_size=self._asr_model,
+                device=self._asr_device,
+                language="en",
+                download_root=download_root,
+            )
+            self._asr_proc.start()
 
         # Load language pipelines
         print("\nLoading language pipelines...")
@@ -420,6 +439,9 @@ class TranslationCoordinator:
 
         if self._asr:
             self._asr.unload()
+        if self._asr_proc:
+            self._asr_proc.stop()
+            self._asr_proc = None
 
     def start(self) -> None:
         """Start the translation system."""
@@ -440,6 +462,15 @@ class TranslationCoordinator:
         for pipeline in self._pipelines.values():
             pipeline.start()
 
+        # Start ASR result thread (batch mode only — subprocess was started in load())
+        if not self._streaming and self._asr_proc:
+            self._asr_result_thread = threading.Thread(
+                target=self._asr_result_loop,
+                daemon=True,
+                name="ASRResultLoop",
+            )
+            self._asr_result_thread.start()
+
         self._running = True
 
         print("Translation system running. Press Ctrl+C to stop.")
@@ -457,6 +488,12 @@ class TranslationCoordinator:
         # Stop audio capture
         if self._audio_input:
             self._audio_input.stop()
+
+        # Join ASR result thread (batch mode) — must happen before stopping pipelines
+        # so any in-flight results still get dispatched
+        if self._asr_result_thread:
+            self._asr_result_thread.join(timeout=5.0)
+            self._asr_result_thread = None
 
         # Stop pipelines
         for pipeline in self._pipelines.values():
@@ -494,45 +531,78 @@ class TranslationCoordinator:
             chunk_duration, chunk.emit_reason, chunk.peak_rms, queue_str
         )
 
-        # Transcribe
-        asr_start = time.time()
-        result = self._asr.transcribe(chunk.data, chunk.sample_rate)
-        asr_time = time.time() - asr_start
-
-        if result.is_empty:
-            self._stats['silent_chunks'] += 1
-            print("  (no speech detected)")
-            logger.info(
-                "SILENT | duration={:.2f}s | asr_time={:.3f}s | rms={:.3f} | emit={}",
-                chunk_duration, asr_time, chunk.peak_rms, chunk.emit_reason
+        # Submit to ASR subprocess — non-blocking, audio callback returns immediately.
+        # Results are delivered via _asr_result_loop running in a separate thread.
+        meta = ASRChunkMeta(
+            chunk_start_time=chunk.chunk_start_time,
+            chunk_duration=chunk.duration,
+            emit_reason=chunk.emit_reason,
+            peak_rms=chunk.peak_rms,
+            sample_rate=chunk.sample_rate,
+        )
+        submitted = self._asr_proc.submit(chunk.data, meta)
+        if not submitted:
+            self._stats['dropped'] += 1
+            logger.warning(
+                "DROP | reason=asr_queue_full | duration={:.2f}s | rms={:.3f}",
+                chunk_duration, chunk.peak_rms,
             )
-            return
+            print("  (ASR queue full — chunk dropped)")
 
-        self._stats['transcriptions'] += 1
-        self._stats['total_asr_time'] += asr_time
+    def _asr_result_loop(self) -> None:
+        """
+        Background thread: drain ASR subprocess results and dispatch to pipelines.
 
-        # Translate each Whisper segment individually instead of the joined blob.
-        # Whisper segments are phrase/sentence-level boundaries determined by the
-        # model itself — far more accurate than our silence-based chunk boundaries.
-        # Segment timestamps also give us per-sentence e2e latency.
-        for seg in result.segments:
-            # Wall-clock time when this specific sentence started being spoken
-            seg_start_wall = (chunk.chunk_start_time + seg.start) if chunk.chunk_start_time > 0 else 0.0
+        Runs for the lifetime of the session.  Exits when _running is False and
+        no further results arrive within one polling interval.
+        """
+        while True:
+            result = self._asr_proc.get_result(timeout=0.2)
+            if result is None:
+                if not self._running:
+                    break
+                continue
 
-            print(f"  [EN] {seg.text}  [{seg.start:.1f}s–{seg.end:.1f}s conf={seg.confidence:.2f}]")
-            logger.info(
-                "[EN] {} | chunk={:.2f}s | seg={:.2f}-{:.2f}s | asr={:.3f}s | confidence={:.3f} | lang_prob={:.3f}",
-                seg.text, chunk_duration, seg.start, seg.end, asr_time,
-                seg.confidence, result.language_probability,
-            )
+            transcription, meta = result
+            asr_time = meta.asr_time
+            chunk_duration = meta.chunk_duration
 
-            for pipeline in self._pipelines.values():
-                pipeline.process(
-                    seg.text,
-                    chunk_start_time=seg_start_wall,
-                    chunk_duration=seg.duration,
-                    asr_time=asr_time,
+            if transcription.is_empty:
+                self._stats['silent_chunks'] += 1
+                print("  (no speech detected)")
+                logger.info(
+                    "SILENT | duration={:.2f}s | asr_time={:.3f}s | rms={:.3f} | emit={}",
+                    chunk_duration, asr_time, meta.peak_rms, meta.emit_reason,
                 )
+                continue
+
+            self._stats['transcriptions'] += 1
+            self._stats['total_asr_time'] += asr_time
+
+            # Translate each Whisper segment individually instead of the joined blob.
+            # Whisper segments are phrase/sentence-level boundaries — far more accurate
+            # than our silence-based chunk boundaries for dispatching to TTS.
+            for seg in transcription.segments:
+                seg_start_wall = (
+                    (meta.chunk_start_time + seg.start)
+                    if meta.chunk_start_time > 0
+                    else 0.0
+                )
+
+                print(f"  [EN] {seg.text}  [{seg.start:.1f}s–{seg.end:.1f}s conf={seg.confidence:.2f}]")
+                logger.info(
+                    "[EN] {} | chunk={:.2f}s | seg={:.2f}-{:.2f}s | asr={:.3f}s | confidence={:.3f} | lang_prob={:.3f}",
+                    seg.text, chunk_duration, seg.start, seg.end, asr_time,
+                    seg.confidence, transcription.language_probability,
+                )
+
+                for pipeline in self._pipelines.values():
+                    pipeline.process(
+                        seg.text,
+                        chunk_start_time=seg_start_wall,
+                        chunk_duration=seg.duration,
+                        asr_time=asr_time,
+                    )
 
     def _on_audio_chunk_streaming(self, chunk: AudioChunk) -> None:
         """Handle incoming audio in streaming mode — feed into rolling buffer."""

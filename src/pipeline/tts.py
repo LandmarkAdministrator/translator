@@ -65,7 +65,7 @@ class TTSService:
         voice: str = "default",
         model_path: Optional[str] = None,
         sample_rate: int = 22050,
-        speed: float = 1.0,
+        speed: float = 0.9,
         download_root: Optional[str] = None,
     ):
         """
@@ -254,11 +254,15 @@ class TTSService:
                 processing_time=0.0,
             )
 
-        # Synthesize using Piper
-        audio_chunks = []
+        # Synthesize using Piper.
+        # Use length_scale (native VITS parameter) instead of numpy resampling —
+        # length_scale adjusts phoneme duration without changing pitch.
+        # length_scale = 1/speed: speed=0.9 → length_scale≈1.11 (10% slower)
+        from piper.config import SynthesisConfig
+        syn_config = SynthesisConfig(length_scale=1.0 / self.speed) if self.speed != 1.0 else None
 
-        for chunk in self._voice.synthesize(text):
-            # AudioChunk has audio_float_array attribute
+        audio_chunks = []
+        for chunk in self._voice.synthesize(text, syn_config=syn_config):
             if hasattr(chunk, 'audio_float_array'):
                 audio_chunks.append(chunk.audio_float_array)
 
@@ -266,12 +270,6 @@ class TTSService:
             audio = np.concatenate(audio_chunks).astype(np.float32)
         else:
             audio = np.array([], dtype=np.float32)
-
-        # Apply speed adjustment if needed
-        if self.speed != 1.0 and len(audio) > 0:
-            new_length = int(len(audio) / self.speed)
-            indices = np.linspace(0, len(audio) - 1, new_length)
-            audio = np.interp(indices, np.arange(len(audio)), audio)
 
         processing_time = time.time() - start_time
 
