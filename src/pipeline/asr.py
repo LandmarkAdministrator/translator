@@ -14,7 +14,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Generator
+from typing import List, Optional, Generator, Tuple
 import numpy as np
 
 
@@ -288,6 +288,198 @@ class ASRService:
         """Context manager exit."""
         self.unload()
         return False
+
+
+class StreamingASRBuffer:
+    """
+    Rolling audio buffer with stable-prefix streaming transcription.
+
+    Instead of waiting for silence to emit a chunk, this runs Whisper on a
+    growing audio buffer every time new audio arrives (~1-2s intervals).
+    Text is only emitted once it appears identically in two consecutive
+    transcriptions (stable prefix), so Whisper can correct itself with
+    growing context before we commit to translating.
+
+    This solves the sentence-spanning problem: a sentence that starts in one
+    chunk and ends in the next is held in the buffer until Whisper sees the
+    complete sentence and the stable prefix catches up to include it.
+
+    Algorithm:
+        1. Accumulate small audio chunks into a rolling buffer (max 25s)
+        2. After each chunk, run Whisper on the whole buffer
+        3. Compare current transcription to previous: find longest word-prefix
+           that matches (the "stable" portion)
+        4. Words that are stable AND not in the unstable tail (last TAIL_WORDS)
+           are confirmed and emitted
+        5. Trim confirmed audio from buffer (keeping a short overlap for context)
+        6. Force-emit if no progress after MAX_STALL_S seconds
+    """
+
+    TAIL_WORDS = 8       # Never confirm the last N words (may still change with context)
+    MAX_STALL_S = 8.0    # Force-emit if no new confirmed text after this many seconds
+    OVERLAP_S = 0.5      # Audio overlap to keep after trimming (context for next call)
+
+    def __init__(self, asr_service: "ASRService", max_buffer_s: float = 25.0):
+        self._asr = asr_service
+        self._max_buffer_s = max_buffer_s
+        self._sample_rate = 16000
+
+        self._audio_buffer: np.ndarray = np.array([], dtype=np.float32)
+        self._buffer_start_wall: float = 0.0   # Wall time of first sample in buffer
+        self._prev_words: List[str] = []
+        self._committed_words: int = 0          # Words in buffer already emitted
+        self._last_commit_wall: float = 0.0
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def feed(
+        self, audio: np.ndarray, chunk_start_wall: float = 0.0
+    ) -> Optional[Tuple[str, float, float]]:
+        """
+        Feed a small audio chunk. Returns (confirmed_text, start_wall_time, asr_time)
+        when new text is confirmed, or None if nothing is ready yet.
+        """
+        if self._buffer_start_wall == 0.0:
+            self._buffer_start_wall = chunk_start_wall or time.time()
+            self._last_commit_wall = self._buffer_start_wall
+
+        # Append and enforce hard cap
+        self._audio_buffer = np.concatenate([self._audio_buffer, audio])
+        max_samples = int(self._max_buffer_s * self._sample_rate)
+        if len(self._audio_buffer) > max_samples:
+            excess = len(self._audio_buffer) - max_samples
+            self._audio_buffer = self._audio_buffer[excess:]
+            self._buffer_start_wall += excess / self._sample_rate
+
+        # Run Whisper on full buffer
+        asr_start = time.time()
+        result = self._asr.transcribe(self._audio_buffer, self._sample_rate)
+        asr_time = time.time() - asr_start
+
+        if result.is_empty:
+            if time.time() - self._last_commit_wall > self.MAX_STALL_S:
+                self._reset()
+            return None
+
+        curr_words = result.text.strip().split()
+        if not curr_words:
+            return None
+
+        # Stable prefix: how many words match between previous and current transcription
+        stable = self._stable_prefix_len(self._prev_words, curr_words)
+
+        # Confirm words that are stable AND not in the unstable tail
+        # Force-emit everything (minus tail) if stalled too long
+        stalled = (time.time() - self._last_commit_wall) > self.MAX_STALL_S
+        confirm_up_to = min(stable, len(curr_words) - self.TAIL_WORDS)
+        if stalled:
+            confirm_up_to = max(confirm_up_to, len(curr_words) - self.TAIL_WORDS)
+
+        self._prev_words = curr_words
+
+        if confirm_up_to <= self._committed_words:
+            return None
+
+        # Newly confirmed words
+        new_words = curr_words[self._committed_words:confirm_up_to]
+        new_text = " ".join(new_words).strip()
+        if not new_text:
+            return None
+
+        # Wall time of the start of the newly confirmed text
+        text_start_s = self._word_start_time(result, self._committed_words)
+        text_start_wall = self._buffer_start_wall + text_start_s
+
+        # Trim buffer to end of confirmed text, keeping OVERLAP_S for context
+        confirm_end_s = self._word_end_time(result, confirm_up_to - 1)
+        trim_s = max(0.0, confirm_end_s - self.OVERLAP_S)
+        trim_samples = int(trim_s * self._sample_rate)
+        self._audio_buffer = self._audio_buffer[trim_samples:]
+        self._buffer_start_wall += trim_s
+
+        # After trimming, Whisper will re-index from 0, so reset word tracking
+        # Keep the tail words as context so stable-prefix still works next round
+        self._prev_words = curr_words[confirm_up_to:]
+        self._committed_words = 0
+        self._last_commit_wall = time.time()
+
+        return (new_text, text_start_wall, asr_time)
+
+    def flush(self) -> Optional[Tuple[str, float, float]]:
+        """
+        Emit all remaining uncommitted text in the buffer (called on shutdown).
+        """
+        if len(self._audio_buffer) < int(0.2 * self._sample_rate):
+            return None
+
+        asr_start = time.time()
+        result = self._asr.transcribe(self._audio_buffer, self._sample_rate)
+        asr_time = time.time() - asr_start
+
+        if result.is_empty:
+            return None
+
+        curr_words = result.text.strip().split()
+        if len(curr_words) <= self._committed_words:
+            return None
+
+        new_words = curr_words[self._committed_words:]
+        new_text = " ".join(new_words).strip()
+        if not new_text:
+            return None
+
+        text_start_s = self._word_start_time(result, self._committed_words)
+        text_start_wall = self._buffer_start_wall + text_start_s
+        self._reset()
+        return (new_text, text_start_wall, asr_time)
+
+    def reset(self) -> None:
+        """Public reset — call between sessions."""
+        self._reset()
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    def _reset(self) -> None:
+        self._audio_buffer = np.array([], dtype=np.float32)
+        self._buffer_start_wall = 0.0
+        self._prev_words = []
+        self._committed_words = 0
+        self._last_commit_wall = 0.0
+
+    @staticmethod
+    def _stable_prefix_len(prev: List[str], curr: List[str]) -> int:
+        """Length of longest common word prefix, ignoring punctuation."""
+        n = min(len(prev), len(curr))
+        for i in range(n):
+            if prev[i].lower().rstrip(".,!?;:'\"") != curr[i].lower().rstrip(".,!?;:'\""):
+                return i
+        return n
+
+    @staticmethod
+    def _word_start_time(result: "TranscriptionResult", word_idx: int) -> float:
+        """Segment start time that contains the word at word_idx."""
+        count = 0
+        for seg in result.segments:
+            words_in_seg = len(seg.text.strip().split())
+            if count + words_in_seg > word_idx:
+                return seg.start
+            count += words_in_seg
+        return result.segments[0].start if result.segments else 0.0
+
+    @staticmethod
+    def _word_end_time(result: "TranscriptionResult", word_idx: int) -> float:
+        """Segment end time that contains the word at word_idx."""
+        count = 0
+        for seg in result.segments:
+            words_in_seg = len(seg.text.strip().split())
+            count += words_in_seg
+            if count > word_idx:
+                return seg.end
+        return result.segments[-1].end if result.segments else 0.0
 
 
 class WhisperTorchService:

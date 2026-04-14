@@ -415,10 +415,18 @@ def run_translator(config: Dict, manager: AudioDeviceManager):
 
     print()
 
+    # Ask about ASR mode
+    print("\nASR Mode:")
+    print("  1. Batch (silence-based chunks, original behaviour)")
+    print("  2. Streaming (rolling re-transcription, better sentence coherence)")
+    mode_choice = get_choice("Select mode", 2)
+    streaming = (mode_choice == 2)
+
     # Create and run coordinator
     coordinator = TranslationCoordinator(
         input_device=input_device,
         languages=pipeline_configs,
+        streaming=streaming,
     )
 
     print("Starting translation system...")

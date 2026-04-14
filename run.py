@@ -60,6 +60,8 @@ Examples:
                         help="Override ASR model size (tiny, base, small, medium, large-v3)")
     parser.add_argument("--list-devices", action="store_true",
                         help="List available audio devices")
+    parser.add_argument("--streaming", action="store_true",
+                        help="Use streaming ASR mode (rolling re-transcription, better sentence coherence)")
 
     args = parser.parse_args()
 
@@ -183,6 +185,7 @@ Examples:
         input_device=input_device,
         languages=pipeline_configs,
         asr_model=asr_model,
+        streaming=args.streaming,
     )
 
     coordinator.run()
