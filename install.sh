@@ -22,9 +22,9 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Default installation directory
-DEFAULT_INSTALL_DIR="/opt/church-translator"
-INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
+# Default installation directory is the repo itself (where this script lives)
+# Override with --dir or INSTALL_DIR env var if needed
+INSTALL_DIR="${INSTALL_DIR:-$SCRIPT_DIR}"
 
 # Script directory (where this script is located)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -495,6 +495,31 @@ install_cuda() {
 }
 
 #=============================================================================
+# PyTorch ROCm Wheel Detection
+#=============================================================================
+
+detect_pytorch_rocm_version() {
+    # Find the latest PyTorch ROCm wheel available at download.pytorch.org.
+    # This ensures the PyTorch wheel matches the installed ROCm version as
+    # closely as possible rather than using a hardcoded (potentially outdated) URL.
+    local pytorch_rocm=""
+
+    if command -v curl &> /dev/null; then
+        pytorch_rocm=$(curl -s "https://download.pytorch.org/whl/" 2>/dev/null | \
+            grep -oP '(?<=href=")rocm[0-9]+\.[0-9]+(?=/)' | \
+            sort -V | tail -1)
+    fi
+
+    if [[ -n "$pytorch_rocm" ]]; then
+        log "Detected latest PyTorch ROCm wheel: $pytorch_rocm"
+        echo "$pytorch_rocm"
+    else
+        warn "Could not detect latest PyTorch ROCm wheel version, using rocm6.3 fallback"
+        echo "rocm6.3"
+    fi
+}
+
+#=============================================================================
 # Python Environment Setup
 #=============================================================================
 
@@ -537,7 +562,9 @@ install_python_deps() {
     case "$GPU_BACKEND" in
         rocm)
             log "Installing PyTorch with ROCm support..."
-            pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.2
+            local pytorch_rocm_ver
+            pytorch_rocm_ver=$(detect_pytorch_rocm_version)
+            pip install torch torchvision torchaudio --index-url "https://download.pytorch.org/whl/${pytorch_rocm_ver}"
             ;;
         cuda)
             log "Installing PyTorch with CUDA support..."
@@ -850,7 +877,7 @@ Options:
   --rocm          Force AMD ROCm GPU backend
   --cuda          Force NVIDIA CUDA GPU backend
   --cpu           CPU-only installation (no GPU acceleration)
-  --dir PATH      Install to specified directory (default: $DEFAULT_INSTALL_DIR)
+  --dir PATH      Install to specified directory (default: repo directory)
   --skip-models   Skip downloading AI models
   --skip-service  Skip systemd service installation
   --help          Show this help message
