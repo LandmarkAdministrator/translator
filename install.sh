@@ -560,6 +560,18 @@ detect_pytorch_rocm_version() {
 # Python Environment Setup
 #=============================================================================
 
+venv_python() {
+    # Run a command using the venv's Python/pip, as the real user when running as root.
+    # Usage: venv_python python -c "..."  or  venv_python pip install ...
+    local cmd="$1"; shift
+    local bin="$INSTALL_DIR/venv/bin/$cmd"
+    if [[ $EUID -eq 0 && "$REAL_USER" != "root" ]]; then
+        sudo -u "$REAL_USER" "$bin" "$@"
+    else
+        "$bin" "$@"
+    fi
+}
+
 setup_python_env() {
     header "Setting Up Python Environment"
 
@@ -575,13 +587,14 @@ setup_python_env() {
     fi
 
     log "Creating virtual environment..."
-    python3 -m venv "$venv_dir"
-
-    log "Activating virtual environment..."
-    source "$venv_dir/bin/activate"
+    if [[ $EUID -eq 0 && "$REAL_USER" != "root" ]]; then
+        sudo -u "$REAL_USER" python3 -m venv "$venv_dir"
+    else
+        python3 -m venv "$venv_dir"
+    fi
 
     log "Upgrading pip..."
-    pip install --upgrade pip setuptools wheel
+    venv_python pip install --upgrade pip setuptools wheel
 
     log "Python environment ready."
 }
@@ -589,11 +602,9 @@ setup_python_env() {
 install_python_deps() {
     header "Installing Python Dependencies"
 
-    source "$INSTALL_DIR/venv/bin/activate"
-
     # Install base dependencies first
     log "Installing base dependencies..."
-    pip install -r "$INSTALL_DIR/requirements/base.txt"
+    venv_python pip install -r "$INSTALL_DIR/requirements/base.txt"
 
     # Install GPU-specific dependencies
     case "$GPU_BACKEND" in
@@ -601,21 +612,21 @@ install_python_deps() {
             log "Installing PyTorch with ROCm support..."
             local pytorch_rocm_ver
             pytorch_rocm_ver=$(detect_pytorch_rocm_version)
-            pip install torch torchvision torchaudio --index-url "https://download.pytorch.org/whl/${pytorch_rocm_ver}"
+            venv_python pip install torch torchvision torchaudio --index-url "https://download.pytorch.org/whl/${pytorch_rocm_ver}"
             ;;
         cuda)
             log "Installing PyTorch with CUDA support..."
-            pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+            venv_python pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
             ;;
         cpu)
             log "Installing PyTorch (CPU only)..."
-            pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+            venv_python pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
             ;;
     esac
 
     # Install ML dependencies
     log "Installing ML dependencies..."
-    pip install -r "$INSTALL_DIR/requirements/ml.txt"
+    venv_python pip install -r "$INSTALL_DIR/requirements/ml.txt"
 
     log "Python dependencies installed."
 }
@@ -729,15 +740,15 @@ download_models() {
 
     # Run model download script
     if [[ -f "$INSTALL_DIR/scripts/download_models.py" ]]; then
-        python "$INSTALL_DIR/scripts/download_models.py" --all
+        venv_python python "$INSTALL_DIR/scripts/download_models.py" --all
     else
         # Fallback: download models manually
         log "Downloading Whisper model..."
-        python -c "from faster_whisper import WhisperModel; WhisperModel('large-v3', device='cpu', download_root='$INSTALL_DIR/models/asr')"
+        venv_python python -c "from faster_whisper import WhisperModel; WhisperModel('base.en', device='cpu', download_root='$INSTALL_DIR/models/asr')"
 
         log "Downloading translation models..."
-        python -c "from transformers import MarianMTModel, MarianTokenizer; MarianMTModel.from_pretrained('Helsinki-NLP/opus-mt-en-es', cache_dir='$INSTALL_DIR/models/translation'); MarianTokenizer.from_pretrained('Helsinki-NLP/opus-mt-en-es', cache_dir='$INSTALL_DIR/models/translation')"
-        python -c "from transformers import MarianMTModel, MarianTokenizer; MarianMTModel.from_pretrained('Helsinki-NLP/opus-mt-en-ht', cache_dir='$INSTALL_DIR/models/translation'); MarianTokenizer.from_pretrained('Helsinki-NLP/opus-mt-en-ht', cache_dir='$INSTALL_DIR/models/translation')"
+        venv_python python -c "from transformers import MarianMTModel, MarianTokenizer; MarianMTModel.from_pretrained('Helsinki-NLP/opus-mt-en-es', cache_dir='$INSTALL_DIR/models/translation'); MarianTokenizer.from_pretrained('Helsinki-NLP/opus-mt-en-es', cache_dir='$INSTALL_DIR/models/translation')"
+        venv_python python -c "from transformers import MarianMTModel, MarianTokenizer; MarianMTModel.from_pretrained('Helsinki-NLP/opus-mt-en-ht', cache_dir='$INSTALL_DIR/models/translation'); MarianTokenizer.from_pretrained('Helsinki-NLP/opus-mt-en-ht', cache_dir='$INSTALL_DIR/models/translation')"
     fi
 
     log "Models downloaded successfully."
@@ -869,10 +880,10 @@ verify_installation() {
     # Check Python packages
     log "Checking Python packages..."
 
-    python -c "import torch; print(f'PyTorch: {torch.__version__}')" || ((errors++))
-    python -c "import faster_whisper; print('faster-whisper: OK')" || ((errors++))
-    python -c "import transformers; print(f'transformers: {transformers.__version__}')" || ((errors++))
-    python -c "import sounddevice; print('sounddevice: OK')" || ((errors++))
+    venv_python python -c "import torch; print(f'PyTorch: {torch.__version__}')" || ((errors++))
+    venv_python python -c "import faster_whisper; print('faster-whisper: OK')" || ((errors++))
+    venv_python python -c "import transformers; print(f'transformers: {transformers.__version__}')" || ((errors++))
+    venv_python python -c "import sounddevice; print('sounddevice: OK')" || ((errors++))
 
     # Check GPU availability (skip if reboot is pending — driver won't be loaded yet)
     if [[ "$NEEDS_REBOOT" == "true" ]]; then
@@ -880,17 +891,17 @@ verify_installation() {
     else
         log "Checking GPU availability..."
         if [[ "$GPU_BACKEND" == "rocm" ]]; then
-            python -c "import torch; print(f'ROCm available: {torch.cuda.is_available()}')" || warn "ROCm not detected by PyTorch"
+            venv_python python -c "import torch; print(f'ROCm available: {torch.cuda.is_available()}')" || warn "ROCm not detected by PyTorch"
             rocminfo 2>/dev/null | head -20 || warn "rocminfo not available"
         elif [[ "$GPU_BACKEND" == "cuda" ]]; then
-            python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')" || warn "CUDA not detected by PyTorch"
+            venv_python python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')" || warn "CUDA not detected by PyTorch"
             nvidia-smi 2>/dev/null | head -10 || warn "nvidia-smi not available"
         fi
     fi
 
     # Check audio devices
     log "Checking audio devices..."
-    python -c "import sounddevice as sd; print(f'Audio devices: {len(sd.query_devices())}')" || ((errors++))
+    venv_python python -c "import sounddevice as sd; print(f'Audio devices: {len(sd.query_devices())}')" || ((errors++))
 
     if [[ $errors -gt 0 ]]; then
         warn "Installation completed with $errors warnings."
