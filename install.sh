@@ -353,17 +353,31 @@ install_rocm() {
         log "Detected latest ROCm version: ${rocm_version}"
     fi
 
-    if [[ "$OS_ID" == "debian" && "$OS_CODENAME" == "trixie" ]]; then
-        # Debian 13 Trixie - use bookworm packages (compatible)
-        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${rocm_version} bookworm main" | \
-            sudo tee /etc/apt/sources.list.d/rocm.list
-    elif [[ "$OS_ID" == "debian" ]]; then
-        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${rocm_version} ${OS_CODENAME} main" | \
-            sudo tee /etc/apt/sources.list.d/rocm.list
-    elif [[ "$OS_ID" == "ubuntu" ]]; then
-        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${rocm_version} jammy main" | \
-            sudo tee /etc/apt/sources.list.d/rocm.list
+    # Determine the apt distribution name.
+    # ROCm 7.x dropped Debian packages — only ships Ubuntu Noble and Jammy.
+    # Debian 13 (Trixie) is library-compatible with Ubuntu Noble and can use those packages.
+    # ROCm 6.x had bookworm packages that worked directly on Debian 12/13.
+    local rocm_dist
+    local rocm_major
+    rocm_major=$(echo "$rocm_version" | cut -d. -f1)
+
+    if [[ "$OS_ID" == "ubuntu" ]]; then
+        if [[ "$OS_CODENAME" == "noble" || "$OS_CODENAME" == "jammy" ]]; then
+            rocm_dist="$OS_CODENAME"
+        else
+            rocm_dist="noble"  # Default to noble for newer Ubuntu releases
+        fi
+    elif [[ "$rocm_major" -ge 7 ]]; then
+        # ROCm 7.x on Debian — noble packages are compatible with Debian Trixie
+        rocm_dist="noble"
+        log "ROCm ${rocm_version} on Debian: using Ubuntu Noble packages (compatible with Trixie)"
+    else
+        # ROCm 6.x on Debian — use bookworm packages
+        rocm_dist="bookworm"
     fi
+
+    echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${rocm_version} ${rocm_dist} main" | \
+        sudo tee /etc/apt/sources.list.d/rocm.list
 
     # Set ROCm package priority
     echo -e 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600' | \
