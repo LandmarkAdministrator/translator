@@ -3,11 +3,18 @@ ASR (Automatic Speech Recognition) Service
 
 Uses faster-whisper for speech-to-text transcription.
 
-faster-whisper uses CTranslate2 for inference, which runs efficiently on CPU
-on any platform. The ASR service intentionally runs on CPU — this is a design
-choice, not a limitation. CTranslate2 int8 CPU inference is fast enough for
-real-time use and avoids GPU memory contention with the translation and TTS
-models that also need GPU resources.
+faster-whisper uses CTranslate2 for inference. By default the service runs on
+CPU (int8) which is fast enough for real-time use with small models (base, small).
+For larger models (medium, large-v3), GPU acceleration is recommended — pass
+device="cuda" to enable it. On AMD ROCm systems CTranslate2 uses the HIP CUDA
+compatibility layer; make sure HSA_OVERRIDE_GFX_VERSION is set (handled by
+.env.rocm / the launcher script).
+
+GPU compute types:
+  float16      — full precision, good accuracy, ~2GB VRAM for large-v3
+  int8_float16 — fastest, minimal quality loss
+CPU compute types:
+  int8         — fastest on CPU (default)
 """
 
 import os
@@ -61,7 +68,7 @@ class ASRService:
         self,
         model_size: str = "base.en",
         language: str = "en",
-        device: str = "cpu",  # Default to CPU for faster-whisper
+        device: str = "cpu",  # "cpu" or "cuda" (ROCm uses cuda compat layer)
         compute_type: str = "auto",
         vad_threshold: float = 0.6,  # Higher = stricter voice detection
         min_speech_duration: float = 0.5,  # Minimum 500ms of speech
@@ -93,13 +100,11 @@ class ASRService:
         self.min_audio_energy = min_audio_energy
         self.no_speech_threshold = no_speech_threshold
 
-        # ASR runs on CPU — intentional design choice, not a limitation.
-        # See module docstring for rationale.
-        self._device = "cpu"
+        self._device = device
 
-        # Set compute type
+        # Set compute type based on device if auto
         if compute_type == "auto":
-            self._compute_type = "int8"  # int8 is fastest on CPU
+            self._compute_type = "float16" if device == "cuda" else "int8"
         else:
             self._compute_type = compute_type
 
@@ -120,7 +125,8 @@ class ASRService:
 
         from faster_whisper import WhisperModel
 
-        print(f"Loading Whisper model '{self.model_size}' on {self._device}...")
+        device_label = "GPU (ROCm/CUDA)" if self._device == "cuda" else "CPU"
+        print(f"Loading Whisper model '{self.model_size}' on {device_label}...")
         print(f"Compute type: {self._compute_type}")
 
         self._model = WhisperModel(
@@ -315,7 +321,7 @@ class StreamingASRBuffer:
         6. Force-emit if no progress after MAX_STALL_S seconds
     """
 
-    TAIL_WORDS = 8       # Never confirm the last N words (may still change with context)
+    TAIL_WORDS = 3       # Never confirm the last N words (may still change with context)
     MAX_STALL_S = 8.0    # Force-emit if no new confirmed text after this many seconds
     OVERLAP_S = 0.5      # Audio overlap to keep after trimming (context for next call)
 

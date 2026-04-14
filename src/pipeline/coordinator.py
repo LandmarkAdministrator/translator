@@ -262,9 +262,11 @@ class TranslationCoordinator:
         asr_model: str = "base.en",
         models_dir: Optional[str] = None,
         streaming: bool = False,
+        asr_device: str = "cpu",
     ):
         self._input_device = input_device
         self._asr_model = asr_model
+        self._asr_device = asr_device
         self._models_dir = models_dir or str(Path(__file__).parent.parent.parent / "models")
         self._streaming = streaming
         self._streaming_buffer: Optional[StreamingASRBuffer] = None
@@ -319,6 +321,7 @@ class TranslationCoordinator:
         self._asr = ASRService(
             model_size=self._asr_model,
             language="en",
+            device=self._asr_device,
             download_root=f"{self._models_dir}/asr",
         )
         self._asr.load()

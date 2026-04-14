@@ -62,6 +62,8 @@ Examples:
                         help="List available audio devices")
     parser.add_argument("--streaming", action="store_true",
                         help="Use streaming ASR mode (rolling re-transcription, better sentence coherence)")
+    parser.add_argument("--gpu-asr", action="store_true",
+                        help="Run Whisper on GPU (ROCm/CUDA) instead of CPU. Use with large-v3 for best results.")
 
     args = parser.parse_args()
 
@@ -186,6 +188,7 @@ Examples:
         languages=pipeline_configs,
         asr_model=asr_model,
         streaming=args.streaming,
+        asr_device="cuda" if args.gpu_asr else "cpu",
     )
 
     coordinator.run()

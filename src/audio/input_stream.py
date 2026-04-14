@@ -458,7 +458,7 @@ class AudioInputStream:
             channels=self.channels,
             dtype=np.float32,
             callback=self._audio_callback,
-            blocksize=int(self._native_sample_rate * 0.1),  # 100ms blocks
+            blocksize=int(self._native_sample_rate * 0.25),  # 250ms blocks — reduces GIL-stall overflows
         )
         self._stream.start()
 
