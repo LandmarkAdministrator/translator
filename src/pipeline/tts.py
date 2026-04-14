@@ -65,7 +65,7 @@ class TTSService:
         voice: str = "default",
         model_path: Optional[str] = None,
         sample_rate: int = 22050,
-        speed: float = 0.9,
+        speed: float = 1.0,
         download_root: Optional[str] = None,
     ):
         """
