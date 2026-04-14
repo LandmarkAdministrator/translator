@@ -1,0 +1,27 @@
+# ==============================================================================
+# REFERENCE TRANSCRIPT — Second test source (faster-paced contrast to JFK)
+# ==============================================================================
+#
+# RECOMMENDED SOURCES (pick one, paste transcript after the BEGIN marker):
+#
+#   1. Steve Jobs Stanford Commencement Address (2005) — ~15 min
+#      Audio/video: https://www.youtube.com/watch?v=UF8uR6Z6KLc
+#      Transcript:  https://news.stanford.edu/2005/06/14/jobs-061505/
+#      Why:  storytelling pace, natural conversational delivery, minimal
+#            oratorical pauses, clean studio-quality source.
+#
+#   2. Simon Sinek — "How great leaders inspire action" (TEDx, 2009) — ~18 min
+#      Video + official transcript (click "Transcript" tab):
+#        https://www.ted.com/talks/simon_sinek_how_great_leaders_inspire_action
+#      Why:  conversational business English, animated delivery, clear diction.
+#
+#   3. Barack Obama — 2004 DNC Keynote Address — ~17 min
+#      Transcript: https://www.americanrhetoric.com/speeches/convention2004/barackobama2004dnc.htm
+#      Why:  political oratory but noticeably faster pace than JFK.
+#
+# If you pick a source not listed above, rename this file to something
+# descriptive (e.g. reference_sinek.txt) and update the analyzer command
+# accordingly.
+#
+# ==============================================================================
+---REFERENCE BEGINS---

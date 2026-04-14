@@ -8,9 +8,18 @@ end-to-end latency for both output languages.
 
 1. **A TV/speaker to play back the source audio**, and a mic picking it up
    (normal room setup — this tests real acoustic pickup, not file-fed audio).
-2. **A source with a known, human-verified transcript.** Recommended:
-   - **JFK Inaugural Address** (~14 min) — <https://www.jfklibrary.org/learn/about-jfk/historic-speeches/inaugural-address>
-   - Or any TED talk with official transcript (TED.com "Read transcript").
+2. **Two contrasting sources** with known, human-verified transcripts.
+   Recommended pair:
+   - **JFK Inaugural Address** (~14 min) — formal oratory, many pauses.
+     Transcript: `reference_jfk_inaugural.txt` (already populated).
+   - **Steve Jobs Stanford Commencement** (~15 min) — storytelling pace,
+     fewer pauses, conversational. Paste into `reference_source2.txt`
+     from <https://news.stanford.edu/2005/06/14/jobs-061505/>.
+
+   Testing both gives you a read on how each ASR mode behaves across
+   pacing styles — the formal speech stresses silence-based chunking
+   (batch), the conversational delivery stresses the rolling window
+   (streaming).
 3. **`jiwer`** for WER:
    ```bash
    source ~/translator/venv/bin/activate
