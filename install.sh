@@ -22,12 +22,19 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Script directory (where this script is located)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Default installation directory is the repo itself (where this script lives)
 # Override with --dir or INSTALL_DIR env var if needed
 INSTALL_DIR="${INSTALL_DIR:-$SCRIPT_DIR}"
 
-# Script directory (where this script is located)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Preserve the real user when run via sudo (usermod, .bashrc, systemd service dir)
+REAL_USER="${SUDO_USER:-$USER}"
+REAL_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
+
+# Non-interactive mode: skip all confirm() prompts and use defaults
+YES=false
 
 # Log file
 LOG_FILE="/tmp/church-translator-install.log"
@@ -62,6 +69,12 @@ header() {
 confirm() {
     local prompt="$1"
     local default="${2:-y}"
+
+    # In non-interactive mode, use the default without prompting
+    if [[ "$YES" == "true" ]]; then
+        [[ "$default" =~ ^[Yy]$ ]]
+        return
+    fi
 
     if [[ "$default" == "y" ]]; then
         prompt="$prompt [Y/n] "
@@ -220,6 +233,16 @@ setup_backports() {
     # Check if current kernel is sufficient
     if ! check_kernel_version; then
         kernel_ok=false
+    fi
+
+    # If kernel is already sufficient and running non-interactively, skip entirely.
+    # Avoids adding a backports repo that may not yet exist (e.g. trixie-backports on new installs).
+    if [[ "$kernel_ok" == "true" && "$YES" == "true" ]]; then
+        log "Kernel already sufficient ($(uname -r)), skipping backports setup."
+        return 0
+    fi
+
+    if [[ "$kernel_ok" == "false" ]]; then
         local current_kernel
         current_kernel=$(uname -r)
         if [[ "$AMD_IS_IGPU" == "true" ]]; then
@@ -358,7 +381,7 @@ install_rocm() {
 
     # Add user to required groups
     log "Adding user to render and video groups..."
-    sudo usermod -a -G render,video "$USER"
+    sudo usermod -a -G render,video "$REAL_USER"
 
     # Set up environment
     setup_rocm_environment
@@ -396,7 +419,7 @@ EOF
     fi
 
     # Add to user's profile if not already there
-    local profile_file="$HOME/.bashrc"
+    local profile_file="$REAL_HOME/.bashrc"
     if ! grep -q "church-translator.*rocm" "$profile_file" 2>/dev/null; then
         echo "" >> "$profile_file"
         echo "# Church Translator ROCm environment" >> "$profile_file"
@@ -594,7 +617,7 @@ setup_directories() {
     if [[ "$INSTALL_DIR" == /opt/* ]]; then
         if [[ ! -d "$INSTALL_DIR" ]]; then
             sudo mkdir -p "$INSTALL_DIR"
-            sudo chown -R "$USER:$USER" "$INSTALL_DIR"
+            sudo chown -R "$REAL_USER:$REAL_USER" "$INSTALL_DIR"
         fi
     else
         mkdir -p "$INSTALL_DIR"
@@ -628,7 +651,6 @@ numpy>=1.24.0,<2.0.0
 scipy>=1.10.0
 pyyaml>=6.0.1
 loguru>=0.7.2
-click>=8.1.7
 tqdm>=4.66.1
 
 # Audio processing
@@ -718,7 +740,7 @@ install_systemd_service() {
         return 0
     fi
 
-    local service_dir="$HOME/.config/systemd/user"
+    local service_dir="$REAL_HOME/.config/systemd/user"
     mkdir -p "$service_dir"
 
     cat > "$service_dir/church-translator.service" << EOF
@@ -880,13 +902,15 @@ Options:
   --dir PATH      Install to specified directory (default: repo directory)
   --skip-models   Skip downloading AI models
   --skip-service  Skip systemd service installation
+  --yes           Non-interactive: accept all defaults (use with sudo)
   --help          Show this help message
 
 Examples:
-  $0                    # Interactive installation
-  $0 --rocm             # Install with AMD ROCm support
-  $0 --cuda             # Install with NVIDIA CUDA support
-  $0 --dir ~/translator # Install to home directory
+  $0                         # Interactive installation
+  $0 --rocm                  # Install with AMD ROCm support
+  $0 --cuda                  # Install with NVIDIA CUDA support
+  $0 --dir ~/translator      # Install to home directory
+  sudo $0 --yes              # Non-interactive install (no TTY required)
 
 EOF
 }
@@ -921,6 +945,10 @@ main() {
                 ;;
             --skip-service)
                 SKIP_SERVICE=true
+                shift
+                ;;
+            --yes|-y)
+                YES=true
                 shift
                 ;;
             --help|-h)
