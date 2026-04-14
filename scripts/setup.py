@@ -367,6 +367,8 @@ def test_pipeline(config: Dict, manager: AudioDeviceManager):
 def run_translator(config: Dict, manager: AudioDeviceManager):
     """Run the translator with the given configuration."""
     from pipeline.coordinator import TranslationCoordinator, PipelineConfig
+    from utils.logger import setup_logger
+    setup_logger(log_dir="logs", log_level="INFO")
 
     print_header("Starting Translator")
 
