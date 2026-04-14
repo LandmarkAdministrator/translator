@@ -5,6 +5,7 @@ Handles audio device enumeration and selection using sounddevice/PortAudio.
 Works with PipeWire, PulseAudio, and ALSA on Linux.
 """
 
+import re
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Any
 import sounddevice as sd
@@ -125,9 +126,30 @@ class AudioDeviceManager:
         outputs = self.get_output_devices()
         return outputs[0] if outputs else None
 
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        """
+        Strip ALSA/PortAudio suffixes that change between reboots.
+
+        Examples stripped:
+          (hw:2,0)   (hw:3,0)   (plughw:2,0)   [card 2]
+        Leaves the stable human-readable part, e.g.:
+          "Onyx Producer 2-2: USB Audio (hw:2,0)" -> "onyx producer 2-2: usb audio"
+        """
+        name = re.sub(r'\s*\((?:plug)?hw:\d+,\d+\)', '', name)
+        name = re.sub(r'\s*\[card\s*\d+\]', '', name, flags=re.IGNORECASE)
+        return name.strip().lower()
+
     def get_device_by_name(self, name: str) -> Optional[AudioDevice]:
         """
-        Find a device by name (partial match).
+        Find a device by name.
+
+        Matching order:
+          1. Exact match (case-insensitive)
+          2. Substring match (case-insensitive)
+          3. Normalized match — strips ALSA hw:X,Y suffixes from both sides,
+             so a saved name like "Onyx Producer 2-2: USB Audio (hw:2,0)"
+             still finds the device after a reboot changed it to (hw:3,0)
 
         Args:
             name: Device name or substring to match
@@ -137,15 +159,23 @@ class AudioDeviceManager:
         """
         name_lower = name.lower()
 
-        # Exact match first
+        # 1. Exact match
         for d in self._devices:
             if d.name.lower() == name_lower:
                 return d
 
-        # Partial match
+        # 2. Substring match
         for d in self._devices:
             if name_lower in d.name.lower():
                 return d
+
+        # 3. Normalized match (strips ALSA hw:X,Y so reboot-resilient)
+        norm_search = self._normalize_name(name)
+        if norm_search:
+            for d in self._devices:
+                norm_dev = self._normalize_name(d.name)
+                if norm_search in norm_dev or norm_dev in norm_search:
+                    return d
 
         return None
 
