@@ -1,0 +1,43 @@
+# Core dependencies
+numpy>=1.24.0,<2.0.0
+scipy>=1.10.0
+pyyaml>=6.0.1
+loguru>=0.7.2
+click>=8.1.7
+tqdm>=4.66.1
+
+# Audio processing
+sounddevice>=0.4.6
+soundfile>=0.12.1
+
+# ASR (Speech-to-Text)
+faster-whisper>=1.1.0
+openai-whisper>=20231117
+
+# Translation
+transformers>=4.35.0
+ctranslate2>=4.0.0
+sentencepiece>=0.1.99
+sacremoses>=0.1.1
+protobuf>=3.20.0
+
+# TTS (Text-to-Speech)
+piper-tts>=1.2.0
+onnxruntime>=1.16.0
+
+# PyTorch with ROCm support (already installed, listed for reference)
+# torch==2.6.0+rocm6.1
+# torchvision==0.21.0+rocm6.1
+# torchaudio==2.6.0+rocm6.1
+# Install with: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm6.1
+
+# IPC and concurrency
+psutil>=5.9.0
+
+# Testing
+pytest>=7.4.3
+pytest-asyncio>=0.21.1
+pytest-cov>=4.1.0
+
+# Additional utilities
+python-dotenv>=1.0.0

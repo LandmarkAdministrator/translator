@@ -1,0 +1,55 @@
+# Haitian Creole Language Configuration
+# ISO 639-1 code: ht
+
+language:
+  code: "ht"
+  name: "Haitian Creole"
+  native_name: "Krey\u00F2l Ayisyen"
+
+# Translation model settings
+translation:
+  # Helsinki-NLP Opus-MT model for English to Haitian Creole
+  model: "Helsinki-NLP/opus-mt-en-ht"
+
+  # Note: Limited model options for Haitian Creole
+  # The en-ht model may have lower quality than major language pairs
+  fallback_models: []
+
+# TTS (Text-to-Speech) settings
+tts:
+  # Piper voice model for Haitian Creole
+  # Note: Haitian Creole TTS voices are limited
+  # Using community-contributed voice if available
+  model: "ht_HT-goudoubert-medium"
+
+  # Voice download URL
+  # Note: May need to use alternative TTS solution if Piper voice unavailable
+  model_url: null
+  config_url: null
+
+  # Speaker ID
+  speaker_id: -1
+
+  # Speech rate adjustment
+  rate: 1.0
+
+  # Fallback: Use French voice with Creole text (not ideal but functional)
+  # Many Haitian Creole speakers understand French pronunciation
+  fallback_voice:
+    model: "fr_FR-upmc-medium"
+    description: "French voice fallback (pronunciation approximation)"
+
+  alternative_voices: []
+
+# Audio output settings
+audio_output:
+  device: null
+  sample_rate: 22050
+  channels: 1
+
+# Special notes for this language
+notes:
+  - "Haitian Creole TTS options are limited"
+  - "May need to download custom voice model"
+  - "French fallback voice available if needed"
+  - "Translation quality may be lower than major language pairs"

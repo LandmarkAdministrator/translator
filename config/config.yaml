@@ -1,0 +1,110 @@
+# Church Audio Translator - Main Configuration
+# This file contains the core system settings
+
+system:
+  # Application name and version
+  name: "Church Audio Translator"
+  version: "0.1.0"
+
+  # Logging configuration
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_dir: "logs"
+  log_rotation: "10 MB"
+  log_retention: "7 days"
+
+# Audio input configuration
+audio_input:
+  # Device name or index (use 'default' for system default)
+  device: "default"
+
+  # Sample rate for input capture (16000 Hz required for Whisper)
+  sample_rate: 16000
+
+  # Audio channels (mono for speech recognition)
+  channels: 1
+
+  # Chunk duration in seconds (how often to process audio)
+  chunk_duration: 2.0
+
+  # Overlap between chunks to prevent word cutoff
+  chunk_overlap: 0.5
+
+  # Buffer size in seconds (circular buffer for audio data)
+  buffer_size: 30.0
+
+# ASR (Automatic Speech Recognition) configuration
+asr:
+  # Model size: tiny, base, small, medium, large-v3
+  # Recommended: base.en for English-only (faster) or small for multilingual
+  model: "base.en"
+
+  # Source language (ISO 639-1 code)
+  language: "en"
+
+  # Use GPU acceleration if available
+  use_gpu: true
+
+  # Compute type: float16, float32, int8 (int8 fastest but less accurate)
+  compute_type: "float16"
+
+  # Voice Activity Detection threshold (0.0-1.0)
+  vad_threshold: 0.5
+
+  # Minimum speech duration in seconds
+  min_speech_duration: 0.25
+
+  # Maximum speech duration before forcing segmentation
+  max_speech_duration: 30.0
+
+# Translation configuration
+translation:
+  # Use GPU acceleration if available
+  use_gpu: true
+
+  # Compute type for CTranslate2
+  compute_type: "float16"
+
+  # Beam size for translation (higher = better quality, slower)
+  beam_size: 4
+
+  # Maximum length of translation output
+  max_length: 256
+
+# TTS (Text-to-Speech) configuration
+tts:
+  # Audio sample rate for output
+  sample_rate: 22050
+
+  # Speed adjustment (1.0 = normal)
+  speed: 1.0
+
+  # Use GPU acceleration if available (ONNX Runtime)
+  use_gpu: true
+
+# Pipeline configuration
+pipeline:
+  # Maximum concurrent translation pipelines
+  max_pipelines: 4
+
+  # Queue size for IPC between processes
+  queue_size: 100
+
+  # Timeout for pipeline operations in seconds
+  timeout: 10.0
+
+  # Graceful shutdown timeout
+  shutdown_timeout: 5.0
+
+# Performance tuning
+performance:
+  # Number of ASR worker threads
+  asr_threads: 4
+
+  # Number of translation worker threads
+  translation_threads: 2
+
+  # Enable GPU memory optimization
+  gpu_memory_fraction: 0.8
+
+  # Pre-warm models on startup
+  prewarm_models: true

@@ -1,0 +1,29 @@
+# Default Preset Configuration
+# This preset is used when no other preset is specified
+
+preset:
+  name: "Default"
+  description: "Default configuration for church service translation"
+
+# Audio input device
+# Use device name from `python -m sounddevice` or index number
+audio_input:
+  device: "default"
+
+# Enabled languages and their output devices
+# Each language maps to a specific audio output device
+languages:
+  spanish:
+    enabled: true
+    output_device: "default"  # Configure with actual device name
+
+  haitian_creole:
+    enabled: true
+    output_device: "default"  # Configure with actual device name
+
+# Override default settings for this preset (optional)
+overrides:
+  # Example: Increase ASR accuracy for noisy environment
+  # asr:
+  #   model: "small"
+  #   vad_threshold: 0.6

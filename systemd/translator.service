@@ -1,0 +1,44 @@
+# Church Audio Translator - Systemd Service Template
+#
+# NOTE: Do not use this file directly.
+# Run `./scripts/install_service.sh install` to generate and install
+# a correctly configured service file for your system.
+#
+# This file is kept as a reference only.
+
+[Unit]
+Description=Church Audio Translator - Real-time speech translation
+After=pipewire.service sound.target
+Wants=pipewire.service
+
+[Service]
+Type=simple
+# User and paths are filled in by install_service.sh based on your system
+User=YOUR_USERNAME
+Group=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME/translator
+
+# GPU environment (AMD ROCm iGPU — set by install_service.sh from .env.rocm)
+# Environment=HSA_OVERRIDE_GFX_VERSION=11.0.0
+
+Environment=PATH=/home/YOUR_USERNAME/translator/venv/bin:/usr/local/bin:/usr/bin:/bin
+Environment=VIRTUAL_ENV=/home/YOUR_USERNAME/translator/venv
+Environment=PYTHONUNBUFFERED=1
+
+ExecStart=/home/YOUR_USERNAME/translator/venv/bin/python /home/YOUR_USERNAME/translator/run.py
+ExecStop=/bin/kill -SIGINT $MAINPID
+
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=30s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=church-translator
+
+# Resource limits
+MemoryMax=8G
+CPUQuota=80%
+
+[Install]
+WantedBy=default.target
