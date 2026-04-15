@@ -558,15 +558,37 @@ class SharedStereoOutput:
         if self._running:
             return
 
-        self._stream = sd.OutputStream(
-            device=self._device.index,
-            samplerate=self._native_sample_rate,
-            channels=self.channels,
-            dtype=np.float32,
-            callback=self._audio_callback,
-            blocksize=int(self._native_sample_rate * 0.05),
-        )
-        self._stream.start()
+        # PortAudio sometimes returns -9998 "Invalid number of channels" when
+        # the device was just released by another process (ALSA/PipeWire state
+        # hasn't settled). Retry with backoff before giving up.
+        from loguru import logger
+        last_err: Optional[Exception] = None
+        for attempt in range(1, 6):
+            try:
+                self._stream = sd.OutputStream(
+                    device=self._device.index,
+                    samplerate=self._native_sample_rate,
+                    channels=self.channels,
+                    dtype=np.float32,
+                    callback=self._audio_callback,
+                    blocksize=int(self._native_sample_rate * 0.05),
+                )
+                self._stream.start()
+                if attempt > 1:
+                    logger.info("OutputStream opened on attempt {}/5", attempt)
+                break
+            except sd.PortAudioError as e:
+                last_err = e
+                self._stream = None
+                if attempt == 5:
+                    logger.error("OutputStream failed after 5 attempts: {}", e)
+                    raise
+                backoff = 2.0 * attempt
+                logger.warning(
+                    "OutputStream open failed (attempt {}/5): {} — retrying in {}s",
+                    attempt, e, backoff,
+                )
+                time.sleep(backoff)
         self._running = True
 
     def stop(self) -> None:

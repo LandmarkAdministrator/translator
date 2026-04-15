@@ -33,8 +33,9 @@ AUDIO_DIR="$SCRIPT_DIR/audio"
 
 WARMUP_SEC=40
 TAIL_SEC=20
-INTERRUN_SEC=15
+INTERRUN_SEC=30             # Give ALSA/PipeWire time to fully release the device
 SHUTDOWN_TIMEOUT=45
+PLAYBACK_MAX_SEC=1200       # Hard cap on ffplay (longest audio is ~15.1 min)
 
 # Test plan: run_number | source_key | audio_file | mode
 TESTS=(
@@ -162,12 +163,20 @@ for test in "${TESTS[@]}"; do
         continue
     fi
 
-    # 4. Play audio locally
+    # 4. Play audio locally. `timeout --kill-after` hard-stops ffplay if the
+    # local audio stack wedges (Run 2 of the prior attempt hung for 18h here).
     AUDIO_START=$(date +%s)
-    log "Playing $audio locally via ffplay..."
-    ffplay -nodisp -autoexit -loglevel error "$AUDIO_DIR/$audio" < /dev/null
+    log "Playing $audio locally via ffplay (cap ${PLAYBACK_MAX_SEC}s)..."
+    timeout --kill-after=10 "$PLAYBACK_MAX_SEC" \
+        ffplay -nodisp -autoexit -loglevel error "$AUDIO_DIR/$audio" < /dev/null
+    ff_rc=$?
     AUDIO_END=$(date +%s)
-    log "  Playback finished ($(( AUDIO_END - AUDIO_START ))s)"
+    elapsed=$(( AUDIO_END - AUDIO_START ))
+    if [ "$ff_rc" -eq 124 ] || [ "$ff_rc" -eq 137 ]; then
+        log "  WARN: ffplay killed by timeout after ${elapsed}s (rc=$ff_rc)"
+    else
+        log "  Playback finished (${elapsed}s, rc=$ff_rc)"
+    fi
 
     # 5. Tail wait
     log "Tail wait ${TAIL_SEC}s for final chunk processing..."
@@ -189,14 +198,21 @@ for test in "${TESTS[@]}"; do
     ssh_r "kill -9 $REMOTE_PID 2>/dev/null; kill -INT $REMOTE_PID 2>/dev/null" || true
     sleep 2
 
-    # 7. Archive log on remote
+    # 7. Archive log on remote.
+    # The translator gzips its log on clean shutdown, so the newest file is
+    # often "*.log.gz", not "*.log". Ranking both patterns together (and
+    # gunzipping if needed) ensures we archive the run we just completed,
+    # not some stale non-rotated log from an earlier aborted session.
     LOG_NAME="run${run}_${src}_${mode}.log"
     ssh_r "
         cd ~/translator && \
-        LATEST=\$(ls -t logs/translator_*.log 2>/dev/null | head -1); \
+        LATEST=\$(ls -t logs/translator_*.log logs/translator_*.log.gz 2>/dev/null | head -1); \
         if [ -n \"\$LATEST\" ]; then \
-            cp \"\$LATEST\" tests/ab_test/results/$LOG_NAME && \
-            echo 'Archived: $LOG_NAME (source: '\$(basename \$LATEST)')'; \
+            case \"\$LATEST\" in \
+                *.gz) zcat \"\$LATEST\" > tests/ab_test/results/$LOG_NAME ;; \
+                *)    cp    \"\$LATEST\" tests/ab_test/results/$LOG_NAME ;; \
+            esac && \
+            echo 'Archived: $LOG_NAME (source: '\$(basename \$LATEST)', size: '\$(stat -c %s tests/ab_test/results/$LOG_NAME)' bytes)'; \
         else \
             echo 'ERROR: no log to archive'; \
         fi
