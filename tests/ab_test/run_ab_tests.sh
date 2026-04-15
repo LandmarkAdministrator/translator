@@ -189,14 +189,50 @@ for test in "${TESTS[@]}"; do
     # Wait for clean exit
     for i in $(seq 1 "$SHUTDOWN_TIMEOUT"); do
         if ! ssh_r "kill -0 $REMOTE_PID 2>/dev/null"; then
-            log "  Exited cleanly after ${i}s"
+            log "  Parent exited cleanly after ${i}s"
             break
         fi
         sleep 1
     done
-    # Force-kill if still hung
-    ssh_r "kill -9 $REMOTE_PID 2>/dev/null; kill -INT $REMOTE_PID 2>/dev/null" || true
-    sleep 2
+    # Force-kill parent if still hung
+    ssh_r "kill -9 $REMOTE_PID 2>/dev/null" || true
+
+    # CRITICAL: kill any surviving child python processes. The Whisper ASR
+    # subprocess sometimes outlives the parent SIGINT path and keeps the USB
+    # audio device open, causing the next run's InputStream to fail with -9998.
+    # Filter by comm=python so we don't self-kill the ssh shell.
+    ssh_r '
+        pids=$(ps -eo pid,comm,args --no-headers | awk "\$2==\"python\" && /run\.py|whisper|multiprocessing/ {print \$1}")
+        if [ -n "$pids" ]; then
+            kill -9 $pids 2>/dev/null || true
+        fi
+    '
+    sleep 3
+
+    # Wait for the USB audio device to actually be free before the next run.
+    # PipeWire can hold it for a few seconds after the owner exits. Probe the
+    # device up to 60s; only proceed when InputStream open succeeds.
+    log "Waiting for USB audio device to be available..."
+    dev_ready=0
+    for i in $(seq 1 30); do
+        if ssh_r '~/translator/venv/bin/python -c "
+import sounddevice as sd, numpy as np, sys
+try:
+    s = sd.InputStream(device=0, samplerate=48000, channels=2, dtype=np.float32, blocksize=4800)
+    s.start(); s.stop(); s.close()
+    sys.exit(0)
+except Exception:
+    sys.exit(1)
+" 2>/dev/null'; then
+            log "  Device ready after ${i}s"
+            dev_ready=1
+            break
+        fi
+        sleep 2
+    done
+    if [ "$dev_ready" = "0" ]; then
+        log "  WARN: device still busy after 60s — launching anyway (retry-in-start may recover)"
+    fi
 
     # 7. Archive log on remote.
     # The translator gzips its log on clean shutdown, so the newest file is
