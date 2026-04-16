@@ -47,6 +47,9 @@ class _FP16WhisperTimestampedASR(WhisperTimestampedASR):
         model = whisper.load_model(modelsize, device="cpu", download_root=cache_dir)
         if device == "cuda":
             model = model.half().to(device)
+            # Force FP16 inference so mel input types match model weights;
+            # whisper's auto-detect doesn't cover whisper_timestamped's path.
+            self.transcribe_kargs["fp16"] = True
         return model
 
 
