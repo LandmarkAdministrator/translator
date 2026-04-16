@@ -78,14 +78,15 @@ class _HFTransformersASR(ASRBase):
         # the next); HF's prompt_ids mechanism has the same failure mode
         # and wasn't giving a quality win. OnlineASRProcessor's
         # LocalAgreement-2 provides the context continuity we need.
+        # Stay close to batch mode's generate_kwargs. Earlier attempt to
+        # force temperature=0 and no_speech_threshold=0.6 through the HF
+        # pipeline triggered an UnboundLocalError inside
+        # generate_with_fallback(). The HF path has its own fallback behavior
+        # that proved safe at RTF 0.33 in batch mode — leave it alone.
         gen_kwargs = {
             "language": self.original_language,
-            "task": "transcribe",
-            "temperature": 0.0,
-            "no_speech_threshold": 0.6,
+            "task": self.transcribe_kargs.get("task", "transcribe"),
         }
-        if self.transcribe_kargs.get("task"):
-            gen_kwargs["task"] = self.transcribe_kargs["task"]
 
         result = self.model(
             {"raw": audio.astype(np.float32), "sampling_rate": SAMPLE_RATE},
