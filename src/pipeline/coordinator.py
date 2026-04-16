@@ -391,13 +391,17 @@ class TranslationCoordinator:
         # Initialize audio input
         print("\nInitializing audio input...")
         if self._streaming:
-            # Streaming mode: emit small frequent chunks (~1s) and let the
-            # LocalAgreement-2 policy commit stable prefixes.
+            # Streaming mode: 3s chunks. openai-whisper has a ~2s per-call
+            # overhead regardless of chunk length, so 1s chunks gave RTF>3
+            # and the pipeline fell behind realtime. 3s amortizes the fixed
+            # cost and brings RTF below 1 on this hardware, while still
+            # emitting often enough for LocalAgreement-2 to commit useful
+            # prefixes (3-5 word phrases instead of single words).
             self._audio_input = AudioInputStream(
                 device=self._input_device,
                 sample_rate=16000,
-                target_chunk_duration=1.0,
-                max_chunk_duration=1.0,
+                target_chunk_duration=3.0,
+                max_chunk_duration=3.0,
                 silence_threshold=0.02,
                 min_silence_duration=10.0,   # Don't split on silence; just time-slice
             )
