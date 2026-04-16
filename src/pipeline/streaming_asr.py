@@ -29,8 +29,8 @@ SAMPLE_RATE = 16000
 # stretch (LocalAgreement-2 keeps disagreeing), its audio_buffer grows without
 # bound because "segment"-based trimming requires at least one commit. Force-
 # trim when the buffer exceeds this, keeping the tail as fresh context.
-MAX_BUFFER_SEC = 25.0
-TRIM_KEEP_SEC = 10.0
+MAX_BUFFER_SEC = 15.0
+TRIM_KEEP_SEC = 5.0
 
 
 class _OpenAIWhisperASR(ASRBase):
@@ -53,12 +53,19 @@ class _OpenAIWhisperASR(ASRBase):
         return whisper.load_model(modelsize, device=device, download_root=cache_dir)
 
     def transcribe(self, audio, init_prompt=""):
+        # temperature=0 disables fallback retries: without this, a single
+        # low-confidence window can trigger five re-decodes at T=0.2..1.0,
+        # multiplying latency 5x. On a busy streaming buffer this is fatal.
+        # no_speech_threshold=0.6 lets whisper skip silent windows instead
+        # of hallucinating through them.
         result = self.model.transcribe(
             audio,
             language=self.original_language,
             initial_prompt=init_prompt or None,
             word_timestamps=True,
             condition_on_previous_text=False,
+            temperature=0.0,
+            no_speech_threshold=0.6,
             fp16=self._fp16,
             verbose=None,
             **self.transcribe_kargs,
@@ -140,20 +147,25 @@ class LocalAgreementASRBuffer:
         if audio.dtype != np.float32:
             audio = audio.astype(np.float32, copy=False)
 
+        # Pre-trim BEFORE decoding: if LocalAgreement-2 has failed to commit
+        # recently, the buffer will be large and transcribe() will spend
+        # proportional time on it. A single runaway decode blocks the audio
+        # callback thread indefinitely, so cap the buffer before we feed it
+        # to whisper, not after.
+        pre_buffer_sec = len(self._online.audio_buffer) / SAMPLE_RATE
+        if pre_buffer_sec > MAX_BUFFER_SEC:
+            drop = pre_buffer_sec - TRIM_KEEP_SEC
+            self._online.chunk_at(self._online.buffer_time_offset + drop)
+            logger.warning(
+                "streaming ASR buffer at %.1fs pre-trimmed to %.1fs (no recent commit)",
+                pre_buffer_sec, TRIM_KEEP_SEC,
+            )
+
         self._online.insert_audio_chunk(audio)
 
         asr_start = time.time()
         beg, end, text = self._online.process_iter()
         asr_time = time.time() - asr_start
-
-        buffer_sec = len(self._online.audio_buffer) / SAMPLE_RATE
-        if buffer_sec > MAX_BUFFER_SEC:
-            drop = buffer_sec - TRIM_KEEP_SEC
-            self._online.chunk_at(self._online.buffer_time_offset + drop)
-            logger.warning(
-                "streaming ASR buffer grew to %.1fs without commit; force-trimmed to %.1fs",
-                buffer_sec, TRIM_KEEP_SEC,
-            )
 
         if not text or beg is None:
             return None
