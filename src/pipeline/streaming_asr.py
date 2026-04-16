@@ -25,6 +25,13 @@ logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16000
 
+# Hard safety valve: if OnlineASRProcessor fails to commit anything for a long
+# stretch (LocalAgreement-2 keeps disagreeing), its audio_buffer grows without
+# bound because "segment"-based trimming requires at least one commit. Force-
+# trim when the buffer exceeds this, keeping the tail as fresh context.
+MAX_BUFFER_SEC = 25.0
+TRIM_KEEP_SEC = 10.0
+
 
 class _OpenAIWhisperASR(ASRBase):
     """
@@ -51,7 +58,7 @@ class _OpenAIWhisperASR(ASRBase):
             language=self.original_language,
             initial_prompt=init_prompt or None,
             word_timestamps=True,
-            condition_on_previous_text=True,
+            condition_on_previous_text=False,
             fp16=self._fp16,
             verbose=None,
             **self.transcribe_kargs,
@@ -138,6 +145,15 @@ class LocalAgreementASRBuffer:
         asr_start = time.time()
         beg, end, text = self._online.process_iter()
         asr_time = time.time() - asr_start
+
+        buffer_sec = len(self._online.audio_buffer) / SAMPLE_RATE
+        if buffer_sec > MAX_BUFFER_SEC:
+            drop = buffer_sec - TRIM_KEEP_SEC
+            self._online.chunk_at(self._online.buffer_time_offset + drop)
+            logger.warning(
+                "streaming ASR buffer grew to %.1fs without commit; force-trimmed to %.1fs",
+                buffer_sec, TRIM_KEEP_SEC,
+            )
 
         if not text or beg is None:
             return None

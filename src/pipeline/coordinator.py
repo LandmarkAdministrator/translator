@@ -602,12 +602,6 @@ class TranslationCoordinator:
         if not self._running:
             return
 
-        # Skip truly silent chunks; feeding silence to OnlineASRProcessor
-        # costs a whisper pass and can induce hallucinations.
-        if chunk.peak_rms < 0.005:
-            self._stats['silent_chunks'] += 1
-            return
-
         try:
             result = self._streaming_buffer.feed(chunk.data, chunk.chunk_start_time)
         except Exception as e:
