@@ -26,13 +26,15 @@ logger = logging.getLogger(__name__)
 SAMPLE_RATE = 16000
 
 
-class _FP16WhisperTimestampedASR(WhisperTimestampedASR):
+class _ROCmWhisperTimestampedASR(WhisperTimestampedASR):
     """
-    Load openai-whisper in float16 to fit large-v3 on the 7.6 GiB iGPU.
+    Load openai-whisper with the right device/fp16 settings for ROCm.
 
-    The default `whisper.load_model` keeps weights in float32 during the
-    load → .to(device) path, which OOMs on the Radeon 890M. We load on
-    CPU, cast to half, then move to GPU.
+    openai-whisper's custom LayerNorm breaks if you manually .half() the
+    model, so we keep FP32 weights and rely on transcribe(fp16=True) for
+    autocast during inference. large-v3 (2.9 GB FP32) + activations
+    does NOT fit on the 7.6 GiB iGPU; callers should use a smaller model
+    (large-v3-turbo, medium, etc.) for the streaming pass.
     """
 
     def load_model(self, modelsize=None, cache_dir=None, model_dir=None):
@@ -42,13 +44,9 @@ class _FP16WhisperTimestampedASR(WhisperTimestampedASR):
         from whisper_timestamped import transcribe_timestamped
 
         self.transcribe_timestamped = transcribe_timestamped
-
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = whisper.load_model(modelsize, device="cpu", download_root=cache_dir)
+        model = whisper.load_model(modelsize, device=device, download_root=cache_dir)
         if device == "cuda":
-            model = model.half().to(device)
-            # Force FP16 inference so mel input types match model weights;
-            # whisper's auto-detect doesn't cover whisper_timestamped's path.
             self.transcribe_kargs["fp16"] = True
         return model
 
@@ -84,7 +82,7 @@ class LocalAgreementASRBuffer:
         cache_dir = self._download_root
         if cache_dir:
             Path(cache_dir).mkdir(parents=True, exist_ok=True)
-        self._asr = _FP16WhisperTimestampedASR(
+        self._asr = _ROCmWhisperTimestampedASR(
             lan=self._language,
             modelsize=self._model_size,
             cache_dir=cache_dir,
