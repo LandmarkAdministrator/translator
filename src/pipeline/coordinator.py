@@ -25,6 +25,7 @@ from audio.input_stream import AudioInputStream, AudioChunk
 from audio.output_stream import AudioOutputStream, SharedStereoOutput, ChannelOutputProxy
 from pipeline.asr import ASRService, WhisperTransformersService, StreamingASRBuffer, TranscriptionResult
 from pipeline.asr_process import ASRProcess, ASRChunkMeta
+from pipeline.streaming_asr import LocalAgreementASRBuffer
 from pipeline.translation import TranslationService, TranslationResult
 from pipeline.tts import TTSService, SpeechResult
 
@@ -270,7 +271,7 @@ class TranslationCoordinator:
         self._asr_device = asr_device
         self._models_dir = models_dir or str(Path(__file__).parent.parent.parent / "models")
         self._streaming = streaming
-        self._streaming_buffer: Optional[StreamingASRBuffer] = None
+        self._streaming_buffer: Optional[LocalAgreementASRBuffer] = None
 
         # Default languages if not specified
         if languages is None:
@@ -319,26 +320,20 @@ class TranslationCoordinator:
         print("Loading Translation Coordinator")
         print("=" * 60)
 
-        # Load ASR — use transformers (PyTorch ROCm) for GPU, CTranslate2 for CPU.
-        # Streaming: direct ASR on the same thread (low-latency rolling re-transcription).
-        # Batch:     ASR subprocess with its own GIL — audio callback never stalls.
+        # Load ASR.
+        #   Streaming: whisper_streaming (UFAL) LocalAgreement-2 policy, via
+        #              whisper-timestamped + openai-whisper (PyTorch/ROCm).
+        #   Batch:     ASR subprocess (transformers) with its own GIL so the
+        #              audio callback never stalls.
         print("\nLoading ASR service...")
         if self._streaming:
-            if self._asr_device == "cuda":
-                self._asr = WhisperTransformersService(
-                    model_size=self._asr_model,
-                    language="en",
-                    device="cuda",
-                    download_root=f"{self._models_dir}/asr/transformers",
-                )
-            else:
-                self._asr = ASRService(
-                    model_size=self._asr_model,
-                    language="en",
-                    device="cpu",
-                    download_root=f"{self._models_dir}/asr",
-                )
-            self._asr.load()
+            print("  streaming backend: whisper_streaming (LocalAgreement-2)")
+            self._streaming_buffer = LocalAgreementASRBuffer(
+                model_size=self._asr_model,
+                language="en",
+                download_root=f"{self._models_dir}/asr/openai_whisper",
+            )
+            self._streaming_buffer.load()
         else:
             download_root = (
                 f"{self._models_dir}/asr/transformers"
@@ -392,17 +387,16 @@ class TranslationCoordinator:
         # Initialize audio input
         print("\nInitializing audio input...")
         if self._streaming:
-            # Streaming mode: emit small frequent chunks (~1-2s).
-            # StreamingASRBuffer handles sentence detection via rolling re-transcription.
+            # Streaming mode: emit small frequent chunks (~1s) and let the
+            # LocalAgreement-2 policy commit stable prefixes.
             self._audio_input = AudioInputStream(
                 device=self._input_device,
                 sample_rate=16000,
-                target_chunk_duration=0.5,   # Start checking for silence immediately
-                max_chunk_duration=1.5,      # Force emit every 1.5s regardless
+                target_chunk_duration=1.0,
+                max_chunk_duration=1.0,
                 silence_threshold=0.02,
-                min_silence_duration=0.3,
+                min_silence_duration=10.0,   # Don't split on silence; just time-slice
             )
-            self._streaming_buffer = StreamingASRBuffer(self._asr)
             self._audio_input.add_callback(self._on_audio_chunk_streaming)
         else:
             # Batch mode: silence-based chunking (original behaviour)
@@ -602,6 +596,12 @@ class TranslationCoordinator:
     def _on_audio_chunk_streaming(self, chunk: AudioChunk) -> None:
         """Handle incoming audio in streaming mode — feed into rolling buffer."""
         if not self._running:
+            return
+
+        # Skip truly silent chunks; feeding silence to OnlineASRProcessor
+        # costs a whisper pass and can induce hallucinations.
+        if chunk.peak_rms < 0.005:
+            self._stats['silent_chunks'] += 1
             return
 
         try:
