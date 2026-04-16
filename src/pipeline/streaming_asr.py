@@ -48,6 +48,11 @@ class _ROCmWhisperTimestampedASR(WhisperTimestampedASR):
         model = whisper.load_model(modelsize, device=device, download_root=cache_dir)
         if device == "cuda":
             self.transcribe_kargs["fp16"] = True
+        # Skip DTW cross-attention alignment — use whisper's native segment
+        # timestamps instead. Roughly 5x faster per decode, which we need
+        # to stay under RTF=1 on the iGPU. Word-level accuracy drops a
+        # little but LocalAgreement's stable-prefix policy is robust to it.
+        self.transcribe_kargs["use_backend_timestamps"] = True
         return model
 
 
