@@ -459,7 +459,11 @@ class AudioInputStream:
                     dtype=np.float32,
                     callback=self._audio_callback,
                     blocksize=int(self._native_sample_rate * 0.25),  # 250ms blocks
-                    latency='high',   # larger PortAudio hardware buffer — extra insurance against overflow
+                    # 1s explicit latency gives PortAudio enough internal
+                    # buffer to survive Python GIL starvation during whisper
+                    # decodes. 'high' on its own was device-dependent and on
+                    # some USB capture hardware resolved to <100ms.
+                    latency=1.0,
                 )
                 self._stream.start()
                 if attempt > 1:
