@@ -33,57 +33,94 @@ MAX_BUFFER_SEC = 15.0
 TRIM_KEEP_SEC = 5.0
 
 
-class _OpenAIWhisperASR(ASRBase):
+class _HFTransformersASR(ASRBase):
     """
-    Whisper backend using openai-whisper's native word-timestamp support
-    (word_timestamps=True), avoiding the extra DTW pass in whisper-
-    timestamped. Significantly faster per decode on the iGPU while still
-    providing the word-level timing OnlineASRProcessor needs.
+    Whisper backend via the Hugging Face transformers pipeline — the same
+    implementation the batch path uses at RTF 0.33 on this hardware. The
+    reference openai-whisper implementation was ~2-3x slower per decode,
+    putting streaming RTF above 1. This backend brings streaming decode
+    into the same performance class as batch.
+
+    Word-level timestamps come from the pipeline's return_timestamps="word"
+    mode — no separate DTW alignment pass.
     """
 
     sep = " "
 
     def load_model(self, modelsize=None, cache_dir=None, model_dir=None):
         import torch
-        import whisper
+        from transformers import pipeline as hf_pipeline
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype = torch.float16 if device == "cuda" else torch.float32
         self._device = device
-        self._fp16 = (device == "cuda")
-        return whisper.load_model(modelsize, device=device, download_root=cache_dir)
+
+        model_id = (
+            modelsize if "/" in (modelsize or "")
+            else f"openai/whisper-{modelsize}"
+        )
+
+        model_kwargs = {"attn_implementation": "eager"}  # ROCm: skip flash-attn
+        if cache_dir:
+            model_kwargs["cache_dir"] = cache_dir
+
+        return hf_pipeline(
+            "automatic-speech-recognition",
+            model=model_id,
+            device=device,
+            dtype=dtype,
+            model_kwargs=model_kwargs,
+        )
 
     def transcribe(self, audio, init_prompt=""):
-        # temperature=0 disables fallback retries: without this, a single
-        # low-confidence window can trigger five re-decodes at T=0.2..1.0,
-        # multiplying latency 5x. On a busy streaming buffer this is fatal.
-        # no_speech_threshold=0.6 lets whisper skip silent windows instead
-        # of hallucinating through them.
-        result = self.model.transcribe(
-            audio,
-            language=self.original_language,
-            initial_prompt=init_prompt or None,
-            word_timestamps=True,
-            condition_on_previous_text=False,
-            temperature=0.0,
-            no_speech_threshold=0.6,
-            fp16=self._fp16,
-            verbose=None,
-            **self.transcribe_kargs,
+        # init_prompt is intentionally ignored: condition_on_previous_text
+        # was harmful in the openai-whisper path (one bad decode poisoned
+        # the next); HF's prompt_ids mechanism has the same failure mode
+        # and wasn't giving a quality win. OnlineASRProcessor's
+        # LocalAgreement-2 provides the context continuity we need.
+        gen_kwargs = {
+            "language": self.original_language,
+            "task": "transcribe",
+            "temperature": 0.0,
+            "no_speech_threshold": 0.6,
+        }
+        if self.transcribe_kargs.get("task"):
+            gen_kwargs["task"] = self.transcribe_kargs["task"]
+
+        result = self.model(
+            {"raw": audio.astype(np.float32), "sampling_rate": SAMPLE_RATE},
+            return_timestamps="word",
+            generate_kwargs=gen_kwargs,
         )
         return result
 
     def ts_words(self, r):
         out = []
-        for s in r["segments"]:
-            for w in s.get("words", []) or []:
-                out.append((w["start"], w["end"], w["word"]))
+        for chunk in r.get("chunks", []) or []:
+            word = chunk.get("text", "")
+            ts = chunk.get("timestamp") or (None, None)
+            start, end = ts[0], ts[1]
+            if word and start is not None and end is not None:
+                out.append((start, end, word))
         return out
 
     def segments_end_ts(self, res):
-        return [s["end"] for s in res["segments"]]
+        # HF returns per-word chunks; approximate segment boundaries at
+        # sentence-ending punctuation. OnlineASRProcessor uses these for
+        # optional segment-based buffer trimming (we also have a hard
+        # pre-trim in LocalAgreementASRBuffer.feed so this is a hint).
+        ends = []
+        for chunk in res.get("chunks", []) or []:
+            word = (chunk.get("text") or "").strip()
+            ts = chunk.get("timestamp") or (None, None)
+            if word and word[-1:] in ".!?" and ts[1] is not None:
+                ends.append(ts[1])
+        return ends
 
     def use_vad(self):
-        self.transcribe_kargs["no_speech_threshold"] = 0.6
+        # HF pipeline exposes VAD indirectly via generate_kwargs'
+        # no_speech_threshold (set in transcribe()); no extra wiring needed.
+        pass
 
     def set_translate_task(self):
         self.transcribe_kargs["task"] = "translate"
@@ -110,7 +147,7 @@ class LocalAgreementASRBuffer:
         self._download_root = download_root
         self._buffer_trim_seconds = buffer_trim_seconds
 
-        self._asr: Optional[WhisperTimestampedASR] = None
+        self._asr: Optional[_HFTransformersASR] = None
         self._online: Optional[OnlineASRProcessor] = None
         self._session_start_wall: float = 0.0
         self._stream_started: bool = False
@@ -120,7 +157,7 @@ class LocalAgreementASRBuffer:
         cache_dir = self._download_root
         if cache_dir:
             Path(cache_dir).mkdir(parents=True, exist_ok=True)
-        self._asr = _OpenAIWhisperASR(
+        self._asr = _HFTransformersASR(
             lan=self._language,
             modelsize=self._model_size,
             cache_dir=cache_dir,

@@ -327,15 +327,16 @@ class TranslationCoordinator:
         #              audio callback never stalls.
         print("\nLoading ASR service...")
         if self._streaming:
-            # openai-whisper keeps large-v3 in FP32 (~3GB weights + activations
-            # overflow the 7.6 GiB iGPU); large-v3-turbo (809M params) fits
-            # comfortably and is the standard streaming model in 2026.
+            # Streaming uses the same HF transformers backend as batch mode
+            # (RTF 0.33 on this hardware, vs 0.77 for openai-whisper). Model
+            # cache lives at models/asr/transformers so it's shared between
+            # batch and streaming downloads.
             streaming_model = "large-v3-turbo" if self._asr_model == "large-v3" else self._asr_model
-            print(f"  streaming backend: whisper_streaming (LocalAgreement-2), model={streaming_model}")
+            print(f"  streaming backend: whisper_streaming (LocalAgreement-2) + HF transformers, model={streaming_model}")
             self._streaming_buffer = LocalAgreementASRBuffer(
                 model_size=streaming_model,
                 language="en",
-                download_root=f"{self._models_dir}/asr/openai_whisper",
+                download_root=f"{self._models_dir}/asr/transformers",
             )
             self._streaming_buffer.load()
         else:
