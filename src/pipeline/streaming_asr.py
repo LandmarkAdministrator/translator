@@ -26,6 +26,30 @@ logger = logging.getLogger(__name__)
 SAMPLE_RATE = 16000
 
 
+class _FP16WhisperTimestampedASR(WhisperTimestampedASR):
+    """
+    Load openai-whisper in float16 to fit large-v3 on the 7.6 GiB iGPU.
+
+    The default `whisper.load_model` keeps weights in float32 during the
+    load → .to(device) path, which OOMs on the Radeon 890M. We load on
+    CPU, cast to half, then move to GPU.
+    """
+
+    def load_model(self, modelsize=None, cache_dir=None, model_dir=None):
+        import torch
+        import whisper
+        import whisper_timestamped
+        from whisper_timestamped import transcribe_timestamped
+
+        self.transcribe_timestamped = transcribe_timestamped
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model = whisper.load_model(modelsize, device="cpu", download_root=cache_dir)
+        if device == "cuda":
+            model = model.half().to(device)
+        return model
+
+
 class LocalAgreementASRBuffer:
     """
     Streaming ASR using UFAL's whisper_streaming LocalAgreement-2 policy.
@@ -57,7 +81,7 @@ class LocalAgreementASRBuffer:
         cache_dir = self._download_root
         if cache_dir:
             Path(cache_dir).mkdir(parents=True, exist_ok=True)
-        self._asr = WhisperTimestampedASR(
+        self._asr = _FP16WhisperTimestampedASR(
             lan=self._language,
             modelsize=self._model_size,
             cache_dir=cache_dir,
