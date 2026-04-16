@@ -19,41 +19,60 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from .vendor.whisper_online import OnlineASRProcessor, WhisperTimestampedASR
+from .vendor.whisper_online import OnlineASRProcessor, ASRBase
 
 logger = logging.getLogger(__name__)
 
 SAMPLE_RATE = 16000
 
 
-class _ROCmWhisperTimestampedASR(WhisperTimestampedASR):
+class _OpenAIWhisperASR(ASRBase):
     """
-    Load openai-whisper with the right device/fp16 settings for ROCm.
+    Whisper backend using openai-whisper's native word-timestamp support
+    (word_timestamps=True), avoiding the extra DTW pass in whisper-
+    timestamped. Significantly faster per decode on the iGPU while still
+    providing the word-level timing OnlineASRProcessor needs.
+    """
 
-    openai-whisper's custom LayerNorm breaks if you manually .half() the
-    model, so we keep FP32 weights and rely on transcribe(fp16=True) for
-    autocast during inference. large-v3 (2.9 GB FP32) + activations
-    does NOT fit on the 7.6 GiB iGPU; callers should use a smaller model
-    (large-v3-turbo, medium, etc.) for the streaming pass.
-    """
+    sep = " "
 
     def load_model(self, modelsize=None, cache_dir=None, model_dir=None):
         import torch
         import whisper
-        import whisper_timestamped
-        from whisper_timestamped import transcribe_timestamped
 
-        self.transcribe_timestamped = transcribe_timestamped
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = whisper.load_model(modelsize, device=device, download_root=cache_dir)
-        if device == "cuda":
-            self.transcribe_kargs["fp16"] = True
-        # Skip DTW cross-attention alignment — use whisper's native segment
-        # timestamps instead. Roughly 5x faster per decode, which we need
-        # to stay under RTF=1 on the iGPU. Word-level accuracy drops a
-        # little but LocalAgreement's stable-prefix policy is robust to it.
-        self.transcribe_kargs["use_backend_timestamps"] = True
-        return model
+        self._device = device
+        self._fp16 = (device == "cuda")
+        return whisper.load_model(modelsize, device=device, download_root=cache_dir)
+
+    def transcribe(self, audio, init_prompt=""):
+        result = self.model.transcribe(
+            audio,
+            language=self.original_language,
+            initial_prompt=init_prompt or None,
+            word_timestamps=True,
+            condition_on_previous_text=True,
+            fp16=self._fp16,
+            verbose=None,
+            **self.transcribe_kargs,
+        )
+        return result
+
+    def ts_words(self, r):
+        out = []
+        for s in r["segments"]:
+            for w in s.get("words", []) or []:
+                out.append((w["start"], w["end"], w["word"]))
+        return out
+
+    def segments_end_ts(self, res):
+        return [s["end"] for s in res["segments"]]
+
+    def use_vad(self):
+        self.transcribe_kargs["no_speech_threshold"] = 0.6
+
+    def set_translate_task(self):
+        self.transcribe_kargs["task"] = "translate"
 
 
 class LocalAgreementASRBuffer:
@@ -87,7 +106,7 @@ class LocalAgreementASRBuffer:
         cache_dir = self._download_root
         if cache_dir:
             Path(cache_dir).mkdir(parents=True, exist_ok=True)
-        self._asr = _ROCmWhisperTimestampedASR(
+        self._asr = _OpenAIWhisperASR(
             lan=self._language,
             modelsize=self._model_size,
             cache_dir=cache_dir,
