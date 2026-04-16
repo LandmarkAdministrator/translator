@@ -66,6 +66,19 @@ remote_kill_translator() {
     '
 }
 
+# Kill ANY python process related to the translator, including zombie
+# multiprocessing workers left behind by prior aborted runs. These hold
+# GPU memory (Whisper weights) and USB audio device handles. Run at the
+# start and after every run to prevent resource exhaustion.
+remote_kill_all_translator_procs() {
+    ssh_r '
+        pids=$(ps -eo pid,comm,args --no-headers | awk "\$2==\"python\" && /run\.py|whisper|multiprocessing|translator\/venv/ {print \$1}")
+        if [ -n "$pids" ]; then
+            kill -9 $pids 2>/dev/null || true
+        fi
+    '
+}
+
 timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
 hms() { printf '%02d:%02d:%02d' $(( $1 / 3600 )) $(( ($1 % 3600) / 60 )) $(( $1 % 60 )); }
 
@@ -111,6 +124,28 @@ ssh_r '~/translator/venv/bin/python -c "import torch; assert torch.cuda.is_avail
     || { log "ERROR: remote GPU check failed"; exit 1; }
 
 ssh_r 'mkdir -p ~/translator/tests/ab_test/results'
+
+# Kill any stray translator processes from previous aborted runs. Zombie
+# multiprocessing workers can hold GPU memory (Whisper weights) for many
+# hours, causing Run N+1 OOMs that aren't fixed by per-run cleanup.
+log "Clearing any stray translator processes from previous runs..."
+remote_kill_all_translator_procs
+sleep 2
+stray=$(ssh_r 'ps -eo pid,comm,args --no-headers | awk "\$2==\"python\" && /run\.py|whisper|multiprocessing|translator\/venv/ {print \$1}" | wc -l')
+if [ "$stray" != "0" ]; then
+    log "  WARN: $stray python processes still present after cleanup"
+else
+    log "  No stray processes"
+fi
+
+# Check GPU is reasonably free before starting
+gpu_free_mb=$(ssh_r '~/translator/venv/bin/python -c "
+import torch
+free, total = torch.cuda.mem_get_info()
+print(free // (1024*1024))
+" 2>/dev/null')
+log "  GPU free: ${gpu_free_mb} MB"
+
 log "Pre-flight complete"
 echo
 
@@ -199,14 +234,9 @@ for test in "${TESTS[@]}"; do
 
     # CRITICAL: kill any surviving child python processes. The Whisper ASR
     # subprocess sometimes outlives the parent SIGINT path and keeps the USB
-    # audio device open, causing the next run's InputStream to fail with -9998.
-    # Filter by comm=python so we don't self-kill the ssh shell.
-    ssh_r '
-        pids=$(ps -eo pid,comm,args --no-headers | awk "\$2==\"python\" && /run\.py|whisper|multiprocessing/ {print \$1}")
-        if [ -n "$pids" ]; then
-            kill -9 $pids 2>/dev/null || true
-        fi
-    '
+    # audio device open (causing -9998) and GPU memory allocated (causing OOM
+    # on the next run).
+    remote_kill_all_translator_procs
     sleep 3
 
     # Wait for the USB audio device to actually be free before the next run.
