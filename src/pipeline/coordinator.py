@@ -23,9 +23,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from audio.input_stream import AudioInputStream, AudioChunk
 from audio.output_stream import AudioOutputStream, SharedStereoOutput, ChannelOutputProxy
-from pipeline.asr import ASRService, WhisperTransformersService, StreamingASRBuffer, TranscriptionResult
+from pipeline.asr import ASRService, WhisperTransformersService, TranscriptionResult
 from pipeline.asr_process import ASRProcess, ASRChunkMeta
-from pipeline.streaming_asr import LocalAgreementASRBuffer
 from pipeline.parakeet_asr import ParakeetASRBuffer
 from pipeline.translation import TranslationService, TranslationResult
 from pipeline.tts import TTSService, SpeechResult
@@ -264,7 +263,6 @@ class TranslationCoordinator:
         languages: List[PipelineConfig] = None,
         asr_model: str = "large-v3",
         models_dir: Optional[str] = None,
-        streaming: bool = False,
         asr_device: str = "cuda",
         parakeet: bool = False,
         parakeet_model: str = "nemo-parakeet-tdt-0.6b-v3",
@@ -273,14 +271,9 @@ class TranslationCoordinator:
         self._asr_model = asr_model
         self._asr_device = asr_device
         self._models_dir = models_dir or str(Path(__file__).parent.parent.parent / "models")
-        # Parakeet runs through the same streaming audio callback as Whisper
-        # streaming (1.5s chunks, _on_audio_chunk_streaming), so enabling it
-        # implies streaming=True. They're mutually exclusive backends of the
-        # same streaming path.
         self._parakeet = parakeet
         self._parakeet_model = parakeet_model
-        self._streaming = streaming or parakeet
-        self._streaming_buffer = None  # LocalAgreementASRBuffer or ParakeetASRBuffer
+        self._parakeet_buffer = None
 
         # Default languages if not specified
         if languages is None:
@@ -330,33 +323,18 @@ class TranslationCoordinator:
         print("=" * 60)
 
         # Load ASR.
-        #   Streaming: whisper_streaming (UFAL) LocalAgreement-2 policy, via
-        #              whisper-timestamped + openai-whisper (PyTorch/ROCm).
-        #   Batch:     ASR subprocess (transformers) with its own GIL so the
-        #              audio callback never stalls.
+        #   Parakeet: onnx-asr with token-level LocalAgreement-2, runs through
+        #             _on_audio_chunk_streaming (1.5s chunks).
+        #   Batch:    ASR subprocess (transformers) with its own GIL so the
+        #             audio callback never stalls.
         print("\nLoading ASR service...")
         if self._parakeet:
-            # Parakeet via onnx-asr. Shares the _on_audio_chunk_streaming
-            # callback with the Whisper streaming path — only the adapter
-            # differs. Requires onnxruntime-rocm (see scripts/install_parakeet.sh).
             print(f"  streaming backend: parakeet (onnx-asr) model={self._parakeet_model}")
-            self._streaming_buffer = ParakeetASRBuffer(
+            self._parakeet_buffer = ParakeetASRBuffer(
                 model_name=self._parakeet_model,
                 cache_dir=f"{self._models_dir}/asr/parakeet",
             )
-            self._streaming_buffer.load()
-        elif self._streaming:
-            # Streaming uses the same HF transformers backend as batch mode
-            # (RTF 0.33 on this hardware, vs 0.77 for openai-whisper). Model
-            # cache lives at models/asr/transformers so it's shared between
-            # batch and streaming downloads.
-            print(f"  streaming backend: whisper_streaming (LocalAgreement-2) + HF transformers, model={self._asr_model}")
-            self._streaming_buffer = LocalAgreementASRBuffer(
-                model_size=self._asr_model,
-                language="en",
-                download_root=f"{self._models_dir}/asr/transformers",
-            )
-            self._streaming_buffer.load()
+            self._parakeet_buffer.load()
         else:
             download_root = (
                 f"{self._models_dir}/asr/transformers"
@@ -409,23 +387,20 @@ class TranslationCoordinator:
 
         # Initialize audio input
         print("\nInitializing audio input...")
-        if self._streaming:
-            # Streaming mode: 1.5s chunks. The HF transformers backend runs at
-            # RTF 0.46 on this hardware, so we can afford the shorter chunk —
-            # smaller MinChunkSize matches the whisper_streaming paper's best
-            # WER/latency tradeoff (1s at 8.1% WER) and gives LocalAgreement-2
-            # more opportunities to commit, reducing boundary deletions.
+        if self._parakeet:
+            # Parakeet streaming: 1.5s chunks, time-sliced (not silence-split).
+            # LocalAgreement-2 at the token level decides commit boundaries.
             self._audio_input = AudioInputStream(
                 device=self._input_device,
                 sample_rate=16000,
                 target_chunk_duration=1.5,
                 max_chunk_duration=1.5,
                 silence_threshold=0.02,
-                min_silence_duration=10.0,   # Don't split on silence; just time-slice
+                min_silence_duration=10.0,
             )
             self._audio_input.add_callback(self._on_audio_chunk_streaming)
         else:
-            # Batch mode: silence-based chunking (original behaviour)
+            # Batch mode: silence-based chunking.
             self._audio_input = AudioInputStream(
                 device=self._input_device,
                 sample_rate=16000,
@@ -436,12 +411,7 @@ class TranslationCoordinator:
             )
             self._audio_input.add_callback(self._on_audio_chunk)
 
-        if self._parakeet:
-            mode_str = "streaming (parakeet / onnx-asr)"
-        elif self._streaming:
-            mode_str = "streaming (whisper / LocalAgreement-2)"
-        else:
-            mode_str = "batch (silence-based)"
+        mode_str = "streaming (parakeet / onnx-asr)" if self._parakeet else "batch (silence-based)"
         print("\n" + "=" * 60)
         print("Translation Coordinator Ready")
         print(f"  Input device: {self._audio_input.device.name} (index {self._audio_input.device.index})")
@@ -488,7 +458,7 @@ class TranslationCoordinator:
             pipeline.start()
 
         # Start ASR result thread (batch mode only — subprocess was started in load())
-        if not self._streaming and self._asr_proc:
+        if not self._parakeet and self._asr_proc:
             self._asr_result_thread = threading.Thread(
                 target=self._asr_result_loop,
                 daemon=True,
@@ -625,12 +595,12 @@ class TranslationCoordinator:
                     )
 
     def _on_audio_chunk_streaming(self, chunk: AudioChunk) -> None:
-        """Handle incoming audio in streaming mode — feed into rolling buffer."""
+        """Handle incoming audio in Parakeet streaming mode — feed into rolling buffer."""
         if not self._running:
             return
 
         try:
-            result = self._streaming_buffer.feed(chunk.data, chunk.chunk_start_time)
+            result = self._parakeet_buffer.feed(chunk.data, chunk.chunk_start_time)
         except Exception as e:
             logger.error("Streaming ASR callback error: {}", e)
             return
@@ -762,9 +732,9 @@ class TranslationCoordinator:
             if self._audio_input:
                 self._audio_input.stop()
 
-            # Flush any remaining text in the streaming buffer
-            if self._streaming and self._streaming_buffer:
-                flush_result = self._streaming_buffer.flush()
+            # Flush any remaining text in the Parakeet streaming buffer
+            if self._parakeet and self._parakeet_buffer:
+                flush_result = self._parakeet_buffer.flush()
                 if flush_result:
                     text, start_wall, asr_time = flush_result
                     logger.info("[EN] {} | mode=streaming/flush | asr={:.3f}s", text, asr_time)

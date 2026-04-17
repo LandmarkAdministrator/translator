@@ -58,19 +58,12 @@ Examples:
                         help="Override target languages (es, ht, fr, pt, de)")
     parser.add_argument("--list-devices", action="store_true",
                         help="List available audio devices")
-    parser.add_argument("--streaming", action="store_true",
-                        help="Use streaming ASR mode (rolling re-transcription, better sentence coherence)")
     parser.add_argument("--parakeet", action="store_true",
-                        help="Use NVIDIA Parakeet via onnx-asr (experimental streaming backend)")
+                        help="Use NVIDIA Parakeet via onnx-asr (streaming backend)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable DEBUG-level logging on console and in log files.")
 
     args = parser.parse_args()
-
-    if args.streaming and args.parakeet:
-        print("\nERROR: --streaming and --parakeet are mutually exclusive "
-              "(they're two backends of the same streaming path).")
-        return 1
 
     # List devices
     if args.list_devices:
@@ -203,7 +196,6 @@ Examples:
     coordinator = TranslationCoordinator(
         input_device=input_device,
         languages=pipeline_configs,
-        streaming=args.streaming,
         parakeet=args.parakeet,
         asr_device="cuda",
     )

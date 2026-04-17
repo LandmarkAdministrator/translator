@@ -7,8 +7,8 @@ stateful decoder), so we approximate streaming by running the full buffer on
 every feed() and applying LocalAgreement-2 at the token level to decide what
 has stabilized and can be emitted.
 
-Public interface matches LocalAgreementASRBuffer so the coordinator uses the
-same audio-callback path — only the backend differs.
+Fed by the coordinator's streaming audio callback (1.5s chunks); emits
+(text, start_wall, asr_time) when LocalAgreement-2 commits new tokens.
 """
 
 from __future__ import annotations

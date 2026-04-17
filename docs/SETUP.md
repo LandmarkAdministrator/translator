@@ -62,8 +62,8 @@ cd translator
 ./install.sh --rocm --parakeet    # ROCm + Parakeet streaming backend
 ```
 
-> CPU-only installation is not supported — the Whisper (batch + streaming)
-> paths require a GPU.  The Parakeet streaming backend runs on CPU, but it
+> CPU-only installation is not supported — the batch Whisper path requires
+> a GPU.  The Parakeet streaming backend runs on CPU, but it
 > shares the venv with Whisper/translation/TTS, all of which still need GPU.
 
 The installer will:
@@ -290,12 +290,11 @@ python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 
 ## Parakeet Streaming Backend (optional)
 
-The project ships three ASR backends and you pick one at runtime:
+The project ships two ASR backends and you pick one at runtime:
 
 | Flag                       | Backend                                              | Where it runs      |
 |----------------------------|------------------------------------------------------|--------------------|
 | *(default, no flag)*       | Whisper batch (faster-whisper via CTranslate2)       | GPU                |
-| `--streaming`              | UFAL whisper_streaming (LocalAgreement-2 on HF Whisper) | GPU             |
 | `--parakeet`               | NVIDIA Parakeet TDT 0.6b v3 via onnx-asr             | CPU (see note)     |
 
 Parakeet is enabled by installing its runtime dependencies separately —
@@ -333,8 +332,8 @@ libhipblas.so.2: cannot open shared object file: No such file or directory
 
 This is expected and benign.  On a Ryzen AI 9 HX 370 (Radeon 890M iGPU
 hardware), Parakeet TDT 0.6b v3 hits RTF ≈ 0.06 on CPU — about 16× faster
-than real time — so the batch/streaming Whisper paths can keep the GPU
-free for MarianMT translation while Parakeet handles ASR on CPU.
+than real time — so the batch Whisper path can keep the GPU free for
+MarianMT translation while Parakeet handles ASR on CPU.
 
 **Do not** create a compatibility symlink `libhipblas.so.3 → libhipblas.so.2`
 — it's a major-version ABI bump and will crash or silently produce wrong

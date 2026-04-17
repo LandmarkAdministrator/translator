@@ -81,8 +81,44 @@ else
     print_warning "Continuing anyway, but ROCm may not work..."
 fi
 
-# Step 2: Create keyrings directory
-print_header "Step 2: Setting Up ROCm Repository"
+# Step 2: Enable trixie-backports and install backport kernel
+# The stock Debian 13 kernel (6.12.x) has an amdgpu bug on gfx1150 (Radeon 890M)
+# that causes native segfaults in Whisper large-v3 fp16 word-timestamp decoding.
+# The 6.19.x backport kernel fixes it. Baking this in so fresh ROCm installs
+# get a working kernel by default.
+print_header "Step 2: Enabling trixie-backports and Installing Backport Kernel"
+
+BACKPORTS_LIST=/etc/apt/sources.list.d/trixie-backports.list
+if [ ! -f "$BACKPORTS_LIST" ] && ! grep -rq "trixie-backports" /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null; then
+    echo "deb http://deb.debian.org/debian/ trixie-backports main contrib non-free non-free-firmware" > "$BACKPORTS_LIST"
+    print_success "Added trixie-backports apt source"
+else
+    print_info "trixie-backports already configured"
+fi
+
+print_info "Updating package lists (backports)..."
+apt update > /tmp/rocm_backports_update.log 2>&1 || {
+    print_error "apt update failed — see /tmp/rocm_backports_update.log"
+    exit 1
+}
+
+CURRENT_KERNEL_MAJOR=$(uname -r | cut -d. -f1)
+CURRENT_KERNEL_MINOR=$(uname -r | cut -d. -f2)
+if [ "$CURRENT_KERNEL_MAJOR" -gt 6 ] || { [ "$CURRENT_KERNEL_MAJOR" -eq 6 ] && [ "$CURRENT_KERNEL_MINOR" -ge 19 ]; }; then
+    print_info "Running kernel $(uname -r) is already ≥6.19 — skipping backport kernel install"
+else
+    print_info "Installing linux-image-amd64 from trixie-backports (≥6.19)..."
+    if apt install -y -t trixie-backports linux-image-amd64 linux-headers-amd64; then
+        print_success "Backport kernel installed — REBOOT REQUIRED before ROCm will work correctly"
+        REBOOT_REQUIRED=1
+    else
+        print_error "Failed to install backport kernel"
+        exit 1
+    fi
+fi
+
+# Step 3: Create keyrings directory
+print_header "Step 3: Setting Up ROCm Repository"
 
 mkdir -p /etc/apt/keyrings
 print_success "Created /etc/apt/keyrings directory"
@@ -122,7 +158,7 @@ EOF
 print_success "Repository priority configured"
 
 # Step 5: Update package lists
-print_header "Step 3: Updating Package Lists"
+print_header "Step 4: Updating Package Lists"
 print_info "Running apt update (this may take a moment)..."
 
 if apt update > /tmp/rocm_apt_update.log 2>&1; then
@@ -134,7 +170,7 @@ else
 fi
 
 # Step 6: Install ROCm packages
-print_header "Step 4: Installing ROCm"
+print_header "Step 5: Installing ROCm"
 print_warning "This will download ~2-3 GB of packages. It may take 10-20 minutes."
 read -p "Continue with installation? (Y/n) " -n 1 -r
 echo
@@ -157,7 +193,7 @@ else
 fi
 
 # Step 7: Add user to required groups
-print_header "Step 5: Configuring User Groups"
+print_header "Step 6: Configuring User Groups"
 
 # Check current groups
 CURRENT_GROUPS=$(groups $ACTUAL_USER)
@@ -185,7 +221,7 @@ else
 fi
 
 # Step 8: Verify ROCm installation
-print_header "Step 6: Verifying ROCm Installation"
+print_header "Step 7: Verifying ROCm Installation"
 
 if [ -f /opt/rocm/bin/rocminfo ]; then
     print_success "ROCm tools installed at /opt/rocm"
@@ -203,7 +239,7 @@ else
 fi
 
 # Step 9: Create environment setup
-print_header "Step 7: Creating Environment Configuration"
+print_header "Step 8: Creating Environment Configuration"
 
 # Add ROCm to PATH in user's bashrc if not already there
 USER_HOME=$(eval echo ~$ACTUAL_USER)
@@ -231,6 +267,10 @@ echo -e "${GREEN}✓ ROCm 7.2.2 has been installed successfully${NC}\n"
 print_warning "IMPORTANT: You must REBOOT or LOG OUT and LOG IN for changes to take effect!"
 echo ""
 echo "Group changes require a new login session."
+if [ "${REBOOT_REQUIRED:-0}" = "1" ]; then
+    echo ""
+    print_warning "A new backport kernel was installed — a FULL REBOOT (not just relogin) is required before ROCm will work correctly on gfx1150."
+fi
 echo ""
 
 print_header "Next Steps"

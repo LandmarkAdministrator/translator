@@ -691,7 +691,6 @@ tqdm>=4.66.1
 # Audio processing
 sounddevice>=0.4.6
 soundfile>=0.12.1
-librosa>=0.10.0       # used by the streaming whisper_streaming vendor code
 
 # IPC and concurrency
 psutil>=5.9.0
@@ -704,11 +703,9 @@ EOF
     # Minimums reflect the versions known to run on ROCm 7.2 / PyTorch 2.11.
     cat > "$INSTALL_DIR/requirements/ml.txt" << 'EOF'
 # ASR (Speech-to-Text)
-# Note: faster-whisper bundles its own CUDA/ROCm runtime via CTranslate2.
-# The HF transformers pipeline is used for the streaming backend; both paths
-# rely on the same torch install selected by install.sh (ROCm or CUDA).
+# faster-whisper bundles its own CUDA/ROCm runtime via CTranslate2; it runs on
+# the same torch install selected by install.sh (ROCm or CUDA).
 faster-whisper>=1.2.0
-whisper-timestamped>=1.15.0   # word-level timestamps helper used by tests/
 
 # Translation
 transformers>=5.0.0
@@ -1127,7 +1124,6 @@ main() {
 
     echo "To run the translator:"
     echo "  $INSTALL_DIR/translator                # default (batch Whisper)"
-    echo "  $INSTALL_DIR/translator --streaming    # whisper_streaming (LocalAgreement-2)"
     if [[ "$INSTALL_PARAKEET" == "true" ]]; then
         echo "  $INSTALL_DIR/translator --parakeet     # Parakeet TDT 0.6b (ONNX, streaming)"
     fi

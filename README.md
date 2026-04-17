@@ -7,7 +7,7 @@ Built for congregations that serve speakers of multiple languages. Runs entirely
 ## Features
 
 - **Real-time** — Low-latency English speech translation (speed depends on hardware)
-- **Three ASR backends** — Batched Whisper (default, GPU), streaming Whisper (`--streaming`, GPU), or Parakeet TDT (`--parakeet`, CPU) for sub-second updates
+- **Two ASR backends** — Batched Whisper (default, GPU) or Parakeet TDT (`--parakeet`, CPU) for sub-second streaming updates
 - **Simultaneous** — Multiple languages at once (Spanish + Haitian Creole out of the box)
 - **Stereo channel split** — Two languages on one stereo output (Spanish left / Haitian Creole right)
 - **GPU accelerated** — AMD ROCm 7.2.2 or NVIDIA CUDA **(required for Whisper backends — CPU-only Whisper is not supported)**
@@ -85,9 +85,6 @@ python run.py --setup
 # Run with saved configuration (batched Whisper on GPU — default)
 python run.py
 
-# Streaming Whisper with LocalAgreement-2 commits (GPU, lower latency)
-python run.py --streaming
-
 # Parakeet TDT 0.6b v3 streaming ASR (CPU, ~sub-second commits)
 python run.py --parakeet
 
@@ -98,10 +95,9 @@ python run.py --test
 python run.py --list-devices
 ```
 
-The three ASR modes are mutually exclusive. `--streaming` and `--parakeet`
-both emit partial transcripts with a token-level LocalAgreement-2 commit
-policy; the default batched Whisper path waits for an utterance to finish
-before translating.
+The default batched Whisper path waits for an utterance to finish before
+translating. `--parakeet` emits partial transcripts in real time with a
+token-level LocalAgreement-2 commit policy.
 
 ## Running as a Service
 
@@ -151,7 +147,7 @@ Adding a new language currently requires a small code change:
 ```
 translator/
 ├── install.sh                  # Automated installer (--rocm | --cuda | --parakeet)
-├── run.py                      # Main entry point (default | --streaming | --parakeet)
+├── run.py                      # Main entry point (default batch Whisper | --parakeet)
 ├── requirements/
 │   ├── base.txt                # Runtime deps (audio, yaml, librosa, hf hub…)
 │   └── ml.txt                  # ML deps (torch, transformers, faster-whisper…)
@@ -160,7 +156,7 @@ translator/
 ├── src/
 │   ├── audio/                  # Audio input/output with PipeWire/ALSA
 │   ├── config/                 # Settings loader (config/settings.yaml)
-│   ├── pipeline/               # ASR (batched/streaming/parakeet), translation, TTS
+│   ├── pipeline/               # ASR (batched Whisper / Parakeet), translation, TTS
 │   └── utils/                  # GPU setup, logging
 ├── scripts/
 │   ├── download_models.py      # Download ML models
