@@ -33,7 +33,15 @@ Target systems must have:
 - 8GB+ RAM
 - 10GB free disk space
 - Audio input/output devices
-- (Optional) AMD or NVIDIA GPU
+- (Optional) AMD GPU with ROCm 7.2.2 or NVIDIA GPU with CUDA 12.x
+
+### Baseline Software Versions
+
+The tested deployment baseline is:
+- ROCm **7.2.2** (Ubuntu Noble packages, installed on Debian 13 Trixie)
+- PyTorch **2.11.0+rocm7.2** (from `download.pytorch.org/whl/rocm7.2`)
+- Python **3.13** (Debian Trixie system Python)
+- onnxruntime-rocm **1.22.2.post1** (only required for `--parakeet`)
 
 ---
 
@@ -53,8 +61,8 @@ tar -czf translator-full.tar.gz \
     --exclude='*.pyc' \
     --exclude='logs/*' \
     --exclude='.git' \
-    src/ scripts/ config/ docs/ models/ \
-    install.sh run.py requirements.txt README.md
+    src/ scripts/ config/ docs/ models/ requirements/ \
+    install.sh run.py README.md
 ```
 
 ### Code-Only Package (without Models)
@@ -70,8 +78,8 @@ tar -czf translator-code.tar.gz \
     --exclude='logs/*' \
     --exclude='.git' \
     --exclude='models/*' \
-    src/ scripts/ config/ docs/ \
-    install.sh run.py requirements.txt README.md
+    src/ scripts/ config/ docs/ requirements/ \
+    install.sh run.py README.md
 ```
 
 ### Models-Only Package
@@ -123,10 +131,17 @@ cd translator
 ./install.sh
 
 # Or specify GPU type
-./install.sh --rocm    # AMD GPU
-./install.sh --cuda    # NVIDIA GPU
-./install.sh --cpu     # No GPU
+./install.sh --rocm              # AMD GPU (ROCm 7.2.2 + PyTorch 2.11 rocm7.2)
+./install.sh --cuda              # NVIDIA GPU
+
+# Include the Parakeet streaming backend (onnxruntime-rocm + onnx-asr model)
+./install.sh --rocm --parakeet
 ```
+
+`--parakeet` is optional and only needed if you plan to run
+`python run.py --parakeet` as the low-latency streaming backend.  It can also
+be installed later by running `./scripts/install_parakeet.sh` from inside the
+project venv.
 
 ### Step 4: Configure Audio
 
@@ -244,12 +259,16 @@ Create a deployment script for consistency:
 
 TARGET_HOST="$1"
 TARGET_USER="${2:-administrator}"
-GPU_TYPE="${3:-auto}"
+GPU_TYPE="${3:-rocm}"     # rocm | cuda
+PARAKEET="${4:-}"          # set to "yes" to include Parakeet backend
 
 if [[ -z "$TARGET_HOST" ]]; then
-    echo "Usage: $0 <hostname> [username] [gpu_type]"
+    echo "Usage: $0 <hostname> [username] [rocm|cuda] [yes-for-parakeet]"
     exit 1
 fi
+
+INSTALL_FLAGS="--$GPU_TYPE"
+[[ "$PARAKEET" == "yes" ]] && INSTALL_FLAGS="$INSTALL_FLAGS --parakeet"
 
 # Create package
 echo "Creating deployment package..."
@@ -268,7 +287,7 @@ ssh "$TARGET_USER@$TARGET_HOST" << EOF
 cd /home/$TARGET_USER
 tar -xzf translator-deploy.tar.gz
 cd translator
-./install.sh --$GPU_TYPE
+./install.sh $INSTALL_FLAGS
 ./scripts/install_service.sh install
 EOF
 
@@ -333,7 +352,11 @@ tar -xzf translator-code-new.tar.gz --strip-components=1
 
 # Reinstall dependencies (if requirements changed)
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements/base.txt -r requirements/ml.txt
+
+# If the Parakeet backend is in use, re-run its installer after ROCm or
+# Python version changes — the onnxruntime-rocm wheel must be re-patched.
+# ./scripts/install_parakeet.sh
 
 # Restart service
 systemctl --user restart church-translator
@@ -455,21 +478,31 @@ For systems without internet access:
 # Download all dependencies
 mkdir -p offline_packages
 
-# Download Python packages
-pip download -d offline_packages/ -r requirements.txt
-pip download -d offline_packages/ torch torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/rocm7.2  # or cu124/cpu
+# Download Python packages (split requirements since ml.txt uses an extra index)
+pip download -d offline_packages/ -r requirements/base.txt
+pip download -d offline_packages/ -r requirements/ml.txt \
+    --index-url https://download.pytorch.org/whl/rocm7.2 \
+    --extra-index-url https://pypi.org/simple
+
+# Optional: Parakeet backend (CPU-friendly streaming ASR)
+pip download -d offline_packages/ \
+    onnxruntime-rocm --pre -f https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/
+pip download -d offline_packages/ 'onnx-asr[hub]'
 
 # Download models
 python scripts/download_models.py --all
+
+# Optionally cache the Parakeet ONNX model too
+HF_HOME="$(pwd)/models/asr/parakeet" python -c \
+    "import onnx_asr; onnx_asr.load_model('nemo-parakeet-tdt-0.6b-v3', providers=['CPUExecutionProvider'])"
 
 # Create complete offline package
 tar -czf translator-offline.tar.gz \
     --exclude='venv' \
     --exclude='__pycache__' \
-    src/ scripts/ config/ docs/ models/ \
+    src/ scripts/ config/ docs/ models/ requirements/ \
     offline_packages/ \
-    install.sh run.py requirements.txt README.md
+    install.sh run.py README.md
 ```
 
 ### On Air-Gapped System
@@ -492,8 +525,13 @@ sudo apt-get install -y python3 python3-venv python3-pip portaudio19-dev \
 # Install Python packages from local cache
 python3 -m venv venv
 source venv/bin/activate
-pip install --no-index --find-links=offline_packages/ -r requirements.txt
-pip install --no-index --find-links=offline_packages/ torch torchvision torchaudio
+pip install --no-index --find-links=offline_packages/ \
+    -r requirements/base.txt -r requirements/ml.txt
+
+# Optional Parakeet backend (same cache)
+pip install --no-index --find-links=offline_packages/ onnxruntime-rocm 'onnx-asr[hub]'
+# then patch the wheel's GNU_STACK bit and cache the model:
+./scripts/install_parakeet.sh    # reuses offline_packages/ via pip's default cache
 
 # Models are already included
 python run.py --test
@@ -534,20 +572,35 @@ python run.py --test
 ### GPU Not Working After Deployment
 
 ```bash
-# Check ROCm (AMD) - should be 7.x+ for best performance
-/opt/rocm/bin/rocminfo
-/opt/rocm/bin/rocminfo 2>&1 | head -5  # Check version
+# Check ROCm (AMD) - baseline is 7.2.2
+/opt/rocm/bin/rocminfo | head -5
+/opt/rocm/bin/rocminfo | grep gfx         # expect gfx1150 on Radeon 890M
 
 # Check CUDA (NVIDIA)
 nvidia-smi
 
-# Reinstall GPU packages
+# Reinstall GPU packages at the tested baseline
 source venv/bin/activate
-pip uninstall torch torchvision torchaudio
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
+pip uninstall -y torch torchvision torchaudio
+pip install --index-url https://download.pytorch.org/whl/rocm7.2 \
+    torch==2.11.0+rocm7.2 torchvision torchaudio
 ```
 
-**Note:** Always use the latest ROCm version for best performance. ROCm 7.x+ is **required** for integrated GPUs (680M, 780M, 890M).
+**Note:** The tested baseline for integrated GPUs (680M / 780M / 890M,
+gfx1103 / gfx1150) is ROCm 7.2.2 with PyTorch 2.11.0+rocm7.2.  Older ROCm
+(6.x) will not detect these iGPUs.
+
+### Parakeet Falls Back to CPU
+
+This is expected on ROCm 7.2.2.  The published `onnxruntime-rocm` 1.22.2 wheel
+links `libhipblas.so.2` and `libamdhip64.so.6` (ROCm 6.x ABI), while Debian
+Trixie ships `.so.3` and `.so.7`.  The ROCMExecutionProvider and MIGraphX
+provider fail to load and onnxruntime silently uses the CPU provider.
+
+On a Ryzen AI 9 HX 370 Parakeet runs at RTF ≈ 0.06 on CPU (~16× realtime), so
+streaming still works.  **Do not** symlink the libraries across major versions
+— it crashes or returns wrong results.  When AMD publishes a 1.24+ wheel built
+for ROCm 7.x, re-run `./scripts/install_parakeet.sh` to pick it up.
 
 ### Audio Devices Different
 

@@ -53,19 +53,30 @@ cd translator
 ./install.sh
 
 # Or specify GPU type explicitly:
-./install.sh --rocm    # For AMD GPUs
-./install.sh --cuda    # For NVIDIA GPUs
-./install.sh --cpu     # CPU only (no GPU acceleration)
+./install.sh --rocm               # For AMD GPUs
+./install.sh --cuda               # For NVIDIA GPUs
+
+# Add --parakeet to also set up the Parakeet TDT 0.6b streaming backend
+# (onnx-asr + onnxruntime-rocm + Parakeet ONNX model).  This is optional —
+# the default Whisper backend is unchanged and still selected at runtime:
+./install.sh --rocm --parakeet    # ROCm + Parakeet streaming backend
 ```
+
+> CPU-only installation is not supported — the Whisper (batch + streaming)
+> paths require a GPU.  The Parakeet streaming backend runs on CPU, but it
+> shares the venv with Whisper/translation/TTS, all of which still need GPU.
 
 The installer will:
 1. Enable required Debian repositories (backports, contrib, non-free)
 2. Install system dependencies
-3. Install GPU drivers (ROCm or CUDA) if applicable
+3. Install GPU drivers (ROCm 7.2.x or CUDA) if applicable
 4. Create Python virtual environment
 5. Install Python dependencies with correct GPU backend
+   (PyTorch 2.11+rocm7.2 or +cu124, transformers 5.x, huggingface_hub 1.x)
 6. Download ML models (Whisper, Opus-MT, Piper TTS)
-7. Set up the systemd service
+7. (If `--parakeet`) install onnxruntime-rocm + onnx-asr and pre-download
+   the Parakeet TDT 0.6b v3 ONNX model
+8. Set up the systemd service
 
 ---
 
@@ -137,26 +148,22 @@ pip install --upgrade pip wheel setuptools
 
 ### Step 7: Install Python Dependencies
 
-For AMD ROCm:
+For AMD ROCm (tested: ROCm 7.2.2 + PyTorch 2.11.0+rocm7.2):
 ```bash
 # Use the newest rocmX.Y wheel published by PyTorch; browse
 # https://download.pytorch.org/whl/ to confirm the latest, or just let
 # ./install.sh --rocm auto-detect it for you.
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm7.2
-pip install -r requirements.txt
+pip install -r requirements/base.txt -r requirements/ml.txt
 ```
 
 For NVIDIA CUDA:
 ```bash
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-pip install -r requirements.txt
+pip install -r requirements/base.txt -r requirements/ml.txt
 ```
 
-For CPU only:
-```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-pip install -r requirements.txt
-```
+> CPU-only installation is not supported; see note in [Quick Install](#quick-install).
 
 ### Step 8: Download Models
 
@@ -164,13 +171,33 @@ pip install -r requirements.txt
 python scripts/download_models.py --all
 ```
 
+### Step 9 (optional): Install Parakeet Streaming Backend
+
+To enable `python run.py --parakeet`, install onnxruntime-rocm, onnx-asr, and
+pre-download the Parakeet TDT 0.6b v3 ONNX model:
+
+```bash
+source venv/bin/activate
+./scripts/install_parakeet.sh
+```
+
+See [Parakeet Streaming Backend](#parakeet-streaming-backend-optional) below
+for details on what this does and its known limitations.
+
 ---
 
 ## GPU-Specific Setup
 
 ### AMD ROCm Setup
 
-**Use the latest ROCm version** for best performance. ROCm 7.x+ is **required** for integrated GPUs (680M/780M/890M).
+**Use ROCm 7.2.2** (the tested baseline — see
+[DEPLOYMENT.md](DEPLOYMENT.md) for the pinned versions used in production).
+ROCm 7.x is **required** for integrated GPUs (680M/780M/890M); older
+versions will not detect these.
+
+Repo layout note: ROCm 7.x ships Ubuntu Noble and Jammy packages only.
+Debian 13 (Trixie) is library-compatible with Noble, so we add the Noble
+repo.  ROCm 6.x has Debian packages, but the project now requires 7.2+.
 
 ```bash
 # Add ROCm repository
@@ -178,21 +205,27 @@ sudo mkdir -p /etc/apt/keyrings
 wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | \
   gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
 
-# Check latest version at https://repo.radeon.com/rocm/apt/
-# Replace VERSION with the latest (e.g., 7.0, 7.1, etc.)
-ROCM_VERSION="7.0"  # Update to latest available
-echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VERSION} trixie main" | \
+# Pin to the tested version (check https://repo.radeon.com/rocm/apt/ for
+# later 7.2.x point releases).  Debian Trixie uses the Noble packages.
+ROCM_VERSION="7.2.2"
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/${ROCM_VERSION} noble main" | \
   sudo tee /etc/apt/sources.list.d/rocm.list
 
+# Priority-pin the ROCm repo so apt prefers its versions over Debian's own
+# ROCm packages (Debian 13 ships partial older ROCm).
+echo -e 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600' | \
+  sudo tee /etc/apt/preferences.d/rocm-pin-600
+
 sudo apt update
-sudo apt install -y rocm-hip-runtime rocm-hip-sdk rocm-libs
+sudo apt install -y rocm-hip-sdk rocm-libs rocm-dev rocminfo rocm-smi-lib
 
 # Add user to required groups
 sudo usermod -aG render,video $USER
 ```
 
-> **Note:** The install script (`./install.sh`) automatically detects the latest available
-> ROCm version and correct Debian codename — the manual steps above are for reference only.
+> **Note:** The install script (`./install.sh`) automates the above,
+> detects the latest ROCm 7.x and matches the Debian/Ubuntu codename
+> automatically — the manual steps above are for reference only.
 
 **Important:** Log out and back in after adding groups.
 
@@ -255,6 +288,76 @@ python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 
 ---
 
+## Parakeet Streaming Backend (optional)
+
+The project ships three ASR backends and you pick one at runtime:
+
+| Flag                       | Backend                                              | Where it runs      |
+|----------------------------|------------------------------------------------------|--------------------|
+| *(default, no flag)*       | Whisper batch (faster-whisper via CTranslate2)       | GPU                |
+| `--streaming`              | UFAL whisper_streaming (LocalAgreement-2 on HF Whisper) | GPU             |
+| `--parakeet`               | NVIDIA Parakeet TDT 0.6b v3 via onnx-asr             | CPU (see note)     |
+
+Parakeet is enabled by installing its runtime dependencies separately —
+either during install (`./install.sh --rocm --parakeet`) or later:
+
+```bash
+source venv/bin/activate
+./scripts/install_parakeet.sh
+```
+
+The script:
+1. Uninstalls any stock `onnxruntime` wheel (it conflicts with
+   `onnxruntime-rocm`, which replaces it as a superset).
+2. Installs `onnxruntime-rocm` from
+   `https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/`.
+3. Patches the AMD wheel's ELF `GNU_STACK` flag from `RWE` to `RW`, so
+   Linux 6.x loaders will accept it (they reject executable stacks).
+4. Installs `onnx-asr[hub]`.
+5. Pre-downloads the Parakeet TDT 0.6b v3 model into
+   `models/asr/parakeet/` via Hugging Face (it honors `HF_HOME`).
+6. Runs a silent-buffer smoke test to confirm the model loads.
+
+### Known limitation: Parakeet runs on CPU, not GPU
+
+The current `onnxruntime-rocm-1.22.2.post1` wheel was built against the
+ROCm 6.x ABI — it links `libhipblas.so.2` and `libamdhip64.so.6`.  On
+ROCm 7.2 the system ships `libhipblas.so.3` and `libamdhip64.so.7`, so at
+runtime `ROCMExecutionProvider` and `MIGraphXExecutionProvider` fail to
+load and `onnxruntime` silently falls back to CPU.  You'll see lines like:
+
+```
+Failed to load library libonnxruntime_providers_rocm.so with error:
+libhipblas.so.2: cannot open shared object file: No such file or directory
+```
+
+This is expected and benign.  On a Ryzen AI 9 HX 370 (Radeon 890M iGPU
+hardware), Parakeet TDT 0.6b v3 hits RTF ≈ 0.06 on CPU — about 16× faster
+than real time — so the batch/streaming Whisper paths can keep the GPU
+free for MarianMT translation while Parakeet handles ASR on CPU.
+
+**Do not** create a compatibility symlink `libhipblas.so.3 → libhipblas.so.2`
+— it's a major-version ABI bump and will crash or silently produce wrong
+results.  When AMD publishes a 1.24+ wheel built for ROCm 7.x, the ROCm
+provider will start working with no code changes (`parakeet_asr.py`
+already requests ROCm first, CPU second, via
+`ort.get_available_providers()`).
+
+### Reinstalling / reverting
+
+- `install_parakeet.sh` is idempotent — re-running it uninstalls the stock
+  `onnxruntime` again (harmless no-op if already removed), reinstalls
+  `onnxruntime-rocm`, re-applies the ELF patch (no-op if already clean),
+  and re-verifies the model.
+- To revert to a Parakeet-free install:
+  ```bash
+  pip uninstall -y onnxruntime-rocm onnx-asr
+  pip install 'onnxruntime>=1.24.0'
+  rm -rf models/asr/parakeet
+  ```
+
+---
+
 ## Audio Device Configuration
 
 ### List Available Devices
@@ -270,7 +373,6 @@ Audio devices and per-language outputs are saved in `config/settings.yaml`, whic
 
 ```yaml
 input_device: "ThinkPad USB-C Dock"
-asr_model: large-v3
 languages:
   - code: es
     name: Spanish

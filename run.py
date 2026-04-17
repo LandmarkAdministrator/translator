@@ -56,16 +56,21 @@ Examples:
                         help="Override input audio device (name or index)")
     parser.add_argument("-l", "--languages", nargs="+",
                         help="Override target languages (es, ht, fr, pt, de)")
-    parser.add_argument("-m", "--model",
-                        help="Override ASR model size (tiny, base, small, medium, large-v3)")
     parser.add_argument("--list-devices", action="store_true",
                         help="List available audio devices")
     parser.add_argument("--streaming", action="store_true",
                         help="Use streaming ASR mode (rolling re-transcription, better sentence coherence)")
+    parser.add_argument("--parakeet", action="store_true",
+                        help="Use NVIDIA Parakeet via onnx-asr (experimental streaming backend)")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable DEBUG-level logging on console and in log files.")
 
     args = parser.parse_args()
+
+    if args.streaming and args.parakeet:
+        print("\nERROR: --streaming and --parakeet are mutually exclusive "
+              "(they're two backends of the same streaming path).")
+        return 1
 
     # List devices
     if args.list_devices:
@@ -174,13 +179,6 @@ Examples:
         print("\nNo languages configured! Run with --setup to configure.")
         return 1
 
-    # Resolve ASR model (command line overrides saved config)
-    if args.model:
-        asr_model = args.model
-        print(f"ASR model (from command line): {asr_model}")
-    else:
-        asr_model = config.get("asr_model", "large-v3")
-        print(f"ASR model (from saved config): {asr_model}")
     print("=" * 60)
 
     # GPU is required — no CPU fallback.  Fail early with a clear reason if
@@ -205,8 +203,8 @@ Examples:
     coordinator = TranslationCoordinator(
         input_device=input_device,
         languages=pipeline_configs,
-        asr_model=asr_model,
         streaming=args.streaming,
+        parakeet=args.parakeet,
         asr_device="cuda",
     )
 

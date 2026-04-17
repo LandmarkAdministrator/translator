@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# ROCm 7.2 Installation Script for AMD Radeon 890M (gfx1150)
+# ROCm 7.2.2 Installation Script for AMD Radeon 890M (gfx1150)
 # Debian 13 (Bookworm)
 #
 # This script installs ROCm and configures the system for GPU acceleration
@@ -53,7 +53,7 @@ if [ "$ACTUAL_USER" = "root" ]; then
     exit 1
 fi
 
-print_header "ROCm 7.2 Installation for AMD Radeon 890M"
+print_header "ROCm 7.2.2 Installation for AMD Radeon 890M"
 
 print_info "Installing for user: $ACTUAL_USER"
 print_info "System: $(lsb_release -ds)"
@@ -98,12 +98,11 @@ else
 fi
 
 # Step 4: Add ROCm repository (Official AMD Instructions)
-print_info "Adding ROCm 7.2 and AMDGPU 7.0.3 repositories..."
-# ROCm 7.2 is available, but AMDGPU only goes up to 7.0.3
+print_info "Adding ROCm 7.2.2 and AMDGPU 7.0.3 repositories..."
+# ROCm 7.2.2 is available, but AMDGPU only goes up to 7.0.3
 # This combination is compatible according to AMD documentation
 cat > /etc/apt/sources.list.d/rocm.list << 'EOF'
-deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/7.2 noble main
-deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/amdgpu/7.0.3/ubuntu noble main
+deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/7.2.2 noble main
 EOF
 
 if [ -f /etc/apt/sources.list.d/rocm.list ]; then
@@ -227,7 +226,7 @@ fi
 # Step 10: Installation summary
 print_header "Installation Complete!"
 
-echo -e "${GREEN}✓ ROCm 7.2 has been installed successfully${NC}\n"
+echo -e "${GREEN}✓ ROCm 7.2.2 has been installed successfully${NC}\n"
 
 print_warning "IMPORTANT: You must REBOOT or LOG OUT and LOG IN for changes to take effect!"
 echo ""

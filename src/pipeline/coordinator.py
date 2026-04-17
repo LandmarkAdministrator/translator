@@ -26,6 +26,7 @@ from audio.output_stream import AudioOutputStream, SharedStereoOutput, ChannelOu
 from pipeline.asr import ASRService, WhisperTransformersService, StreamingASRBuffer, TranscriptionResult
 from pipeline.asr_process import ASRProcess, ASRChunkMeta
 from pipeline.streaming_asr import LocalAgreementASRBuffer
+from pipeline.parakeet_asr import ParakeetASRBuffer
 from pipeline.translation import TranslationService, TranslationResult
 from pipeline.tts import TTSService, SpeechResult
 
@@ -265,13 +266,21 @@ class TranslationCoordinator:
         models_dir: Optional[str] = None,
         streaming: bool = False,
         asr_device: str = "cuda",
+        parakeet: bool = False,
+        parakeet_model: str = "nemo-parakeet-tdt-0.6b-v3",
     ):
         self._input_device = input_device
         self._asr_model = asr_model
         self._asr_device = asr_device
         self._models_dir = models_dir or str(Path(__file__).parent.parent.parent / "models")
-        self._streaming = streaming
-        self._streaming_buffer: Optional[LocalAgreementASRBuffer] = None
+        # Parakeet runs through the same streaming audio callback as Whisper
+        # streaming (1.5s chunks, _on_audio_chunk_streaming), so enabling it
+        # implies streaming=True. They're mutually exclusive backends of the
+        # same streaming path.
+        self._parakeet = parakeet
+        self._parakeet_model = parakeet_model
+        self._streaming = streaming or parakeet
+        self._streaming_buffer = None  # LocalAgreementASRBuffer or ParakeetASRBuffer
 
         # Default languages if not specified
         if languages is None:
@@ -326,7 +335,17 @@ class TranslationCoordinator:
         #   Batch:     ASR subprocess (transformers) with its own GIL so the
         #              audio callback never stalls.
         print("\nLoading ASR service...")
-        if self._streaming:
+        if self._parakeet:
+            # Parakeet via onnx-asr. Shares the _on_audio_chunk_streaming
+            # callback with the Whisper streaming path — only the adapter
+            # differs. Requires onnxruntime-rocm (see scripts/install_parakeet.sh).
+            print(f"  streaming backend: parakeet (onnx-asr) model={self._parakeet_model}")
+            self._streaming_buffer = ParakeetASRBuffer(
+                model_name=self._parakeet_model,
+                cache_dir=f"{self._models_dir}/asr/parakeet",
+            )
+            self._streaming_buffer.load()
+        elif self._streaming:
             # Streaming uses the same HF transformers backend as batch mode
             # (RTF 0.33 on this hardware, vs 0.77 for openai-whisper). Model
             # cache lives at models/asr/transformers so it's shared between
@@ -417,7 +436,12 @@ class TranslationCoordinator:
             )
             self._audio_input.add_callback(self._on_audio_chunk)
 
-        mode_str = "streaming (rolling re-transcription)" if self._streaming else "batch (silence-based)"
+        if self._parakeet:
+            mode_str = "streaming (parakeet / onnx-asr)"
+        elif self._streaming:
+            mode_str = "streaming (whisper / LocalAgreement-2)"
+        else:
+            mode_str = "batch (silence-based)"
         print("\n" + "=" * 60)
         print("Translation Coordinator Ready")
         print(f"  Input device: {self._audio_input.device.name} (index {self._audio_input.device.index})")
@@ -808,7 +832,6 @@ def main():
 
     parser = argparse.ArgumentParser(description="Church Audio Translator")
     parser.add_argument("--input", "-i", default="default", help="Input audio device")
-    parser.add_argument("--model", "-m", default="large-v3", help="ASR model size")
     parser.add_argument("--languages", "-l", nargs="+", default=["es", "ht"],
                         help="Target languages")
     args = parser.parse_args()
@@ -834,7 +857,6 @@ def main():
     coordinator = TranslationCoordinator(
         input_device=args.input,
         languages=configs,
-        asr_model=args.model,
     )
 
     coordinator.run()

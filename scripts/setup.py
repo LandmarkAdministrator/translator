@@ -425,17 +425,12 @@ def run_translator(config: Dict, manager: AudioDeviceManager):
     # GPU is always used — this project requires a ROCm or CUDA GPU.
     asr_device = "cuda"
 
-    # ASR model from saved config
-    asr_model = config.get("asr_model", "large-v3")
-    print(f"ASR model: {asr_model}  (change with --setup → model config, or --model flag)")
-
     # Create and run coordinator
     coordinator = TranslationCoordinator(
         input_device=input_device,
         languages=pipeline_configs,
         streaming=streaming,
         asr_device=asr_device,
-        asr_model=asr_model,
     )
 
     print("Starting translation system...")
@@ -475,14 +470,10 @@ def main_menu():
                 channel_str = " [RIGHT]"
             print(f"    {status} {lang['name']} -> {output}{channel_str}")
 
-        asr_model = config.get("asr_model", "large-v3")
-        print(f"  ASR model:  {asr_model}")
-
         options = [
             "List audio devices",
             "Configure audio input",
             "Configure languages",
-            "Configure ASR model",
             "Test pipeline",
             "Run translator",
             "Exit",
@@ -510,27 +501,15 @@ def main_menu():
             input("Press Enter to continue...")
 
         elif choice == 4:
-            models = ["tiny.en", "base.en", "small.en", "medium.en", "large-v3"]
-            print("\nSelect ASR model:")
-            for i, m in enumerate(models, 1):
-                current = " (current)" if m == config.get("asr_model", "large-v3") else ""
-                print(f"  {i}. {m}{current}")
-            model_choice = get_choice("Choice", len(models))
-            config["asr_model"] = models[model_choice - 1]
-            save_settings(config)
-            print(f"\nASR model set to: {config['asr_model']}")
-            input("Press Enter to continue...")
-
-        elif choice == 5:
             manager.refresh()
             test_pipeline(config, manager)
             input("\nPress Enter to continue...")
 
-        elif choice == 6:
+        elif choice == 5:
             manager.refresh()
             run_translator(config, manager)
 
-        elif choice == 7:
+        elif choice == 6:
             print("\nGoodbye!")
             break
 

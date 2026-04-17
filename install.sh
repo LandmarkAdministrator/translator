@@ -3,16 +3,21 @@
 # Church Audio Translator - Installation Script
 #
 # Supports: Debian 13 (Trixie), Ubuntu 22.04+
-# GPU: AMD ROCm 7.x+ (required for iGPUs), NVIDIA CUDA 12.x+, or CPU-only
+# GPU: AMD ROCm 7.2+ (required for iGPUs), NVIDIA CUDA 12.x+
 #
 # Usage:
 #   ./install.sh              # Interactive install (requires a GPU)
 #   ./install.sh --rocm       # Force AMD ROCm installation
 #   ./install.sh --cuda       # Force NVIDIA CUDA installation
+#   ./install.sh --parakeet   # Also install onnx-asr + Parakeet ONNX model
+#                             # (enables the --parakeet streaming backend)
 #   ./install.sh --help       # Show help
 #
 # Note: CPU-only installation is not supported — the translator requires
-# a ROCm or CUDA GPU to run in real time.
+# a ROCm or CUDA GPU to run in real time.  The Parakeet streaming backend
+# runs on CPU (onnxruntime-rocm's ROCM/MIGraphX providers don't load against
+# ROCm 7.2's hipblas.so.3), but CPU is comfortably >RTF 1 for Parakeet on
+# modern hardware.
 #
 
 set -e
@@ -347,9 +352,10 @@ install_rocm() {
             sort -V | tail -1)
     fi
 
-    # Fallback to known latest if detection fails
+    # Fallback to known latest if detection fails.
+    # 7.2.2 is what we currently test against on gfx1150 (Radeon 890M).
     if [[ -z "$rocm_version" ]]; then
-        rocm_version="6.3.2"  # Fallback - update this periodically
+        rocm_version="7.2.2"  # Fallback - update this periodically
         warn "Could not detect latest ROCm version, using ${rocm_version}"
     else
         log "Detected latest ROCm version: ${rocm_version}"
@@ -672,10 +678,12 @@ create_requirements_files() {
     mkdir -p "$INSTALL_DIR/requirements"
 
     # Base requirements (no GPU dependencies)
+    # numpy is unpinned: PyTorch 2.11+ (ROCm 7.2 wheel) requires numpy 2.x,
+    # and torch's own constraint picks a compatible version.
     cat > "$INSTALL_DIR/requirements/base.txt" << 'EOF'
 # Core dependencies
-numpy>=1.24.0,<2.0.0
-scipy>=1.10.0
+numpy>=2.0.0
+scipy>=1.13.0
 pyyaml>=6.0.1
 loguru>=0.7.2
 tqdm>=4.66.1
@@ -683,6 +691,7 @@ tqdm>=4.66.1
 # Audio processing
 sounddevice>=0.4.6
 soundfile>=0.12.1
+librosa>=0.10.0       # used by the streaming whisper_streaming vendor code
 
 # IPC and concurrency
 psutil>=5.9.0
@@ -692,22 +701,26 @@ python-dotenv>=1.0.0
 EOF
 
     # ML/AI requirements
+    # Minimums reflect the versions known to run on ROCm 7.2 / PyTorch 2.11.
     cat > "$INSTALL_DIR/requirements/ml.txt" << 'EOF'
 # ASR (Speech-to-Text)
 # Note: faster-whisper bundles its own CUDA/ROCm runtime via CTranslate2.
-# openai-whisper is NOT needed — faster-whisper replaces it entirely.
-faster-whisper>=1.1.0
+# The HF transformers pipeline is used for the streaming backend; both paths
+# rely on the same torch install selected by install.sh (ROCm or CUDA).
+faster-whisper>=1.2.0
+whisper-timestamped>=1.15.0   # word-level timestamps helper used by tests/
 
 # Translation
-transformers>=4.35.0
-ctranslate2>=4.0.0
+transformers>=5.0.0
+ctranslate2>=4.7.0
 sentencepiece>=0.1.99
 sacremoses>=0.1.1
-protobuf>=3.20.0
+protobuf>=4.21.0
+huggingface_hub>=1.0.0
 
 # TTS (Text-to-Speech)
-piper-tts>=1.2.0
-onnxruntime>=1.16.0
+piper-tts>=1.4.0
+onnxruntime>=1.24.0   # Replaced by onnxruntime-rocm when --parakeet is used
 EOF
 
     # Development/testing requirements
@@ -754,6 +767,31 @@ download_models() {
     fi
 
     log "Models downloaded successfully."
+}
+
+#=============================================================================
+# Parakeet Streaming Backend (optional)
+#=============================================================================
+
+install_parakeet() {
+    header "Installing Parakeet Streaming Backend"
+
+    local script="$INSTALL_DIR/scripts/install_parakeet.sh"
+    if [[ ! -f "$script" ]]; then
+        warn "scripts/install_parakeet.sh not found — skipping Parakeet install."
+        return 0
+    fi
+
+    # install_parakeet.sh requires the venv to be activated.
+    # When run under sudo we need to stay as REAL_USER so writes to
+    # ~/translator/models and venv/ use the right ownership.
+    if [[ $EUID -eq 0 && "$REAL_USER" != "root" ]]; then
+        sudo -u "$REAL_USER" bash -c "source '$INSTALL_DIR/venv/bin/activate' && cd '$INSTALL_DIR' && bash '$script'"
+    else
+        (source "$INSTALL_DIR/venv/bin/activate" && cd "$INSTALL_DIR" && bash "$script")
+    fi
+
+    log "Parakeet backend installed.  Run with: $INSTALL_DIR/translator --parakeet"
 }
 
 #=============================================================================
@@ -905,6 +943,12 @@ verify_installation() {
     log "Checking audio devices..."
     venv_python python -c "import sounddevice as sd; print(f'Audio devices: {len(sd.query_devices())}')" || ((errors++))
 
+    # Parakeet-specific checks (only if installed)
+    if [[ "$INSTALL_PARAKEET" == "true" ]]; then
+        log "Checking Parakeet stack..."
+        venv_python python -c "import onnx_asr; import onnxruntime as ort; print(f'onnx-asr OK; providers={ort.get_available_providers()}')" || ((errors++))
+    fi
+
     if [[ $errors -gt 0 ]]; then
         warn "Installation completed with $errors warnings."
     else
@@ -925,6 +969,7 @@ Usage: $0 [OPTIONS]
 Options:
   --rocm          Force AMD ROCm GPU backend
   --cuda          Force NVIDIA CUDA GPU backend
+  --parakeet      Also install onnx-asr + Parakeet ONNX model (streaming backend)
   --dir PATH      Install to specified directory (default: repo directory)
   --skip-models   Skip downloading AI models
   --skip-service  Skip systemd service installation
@@ -934,6 +979,7 @@ Options:
 Examples:
   $0                         # Interactive installation
   $0 --rocm                  # Install with AMD ROCm support
+  $0 --rocm --parakeet       # ROCm + Parakeet streaming backend
   $0 --cuda                  # Install with NVIDIA CUDA support
   $0 --dir ~/translator      # Install to home directory
   sudo $0 --yes              # Non-interactive install (no TTY required)
@@ -946,6 +992,7 @@ main() {
     FORCE_GPU=""
     SKIP_MODELS=false
     SKIP_SERVICE=false
+    INSTALL_PARAKEET=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -955,6 +1002,10 @@ main() {
                 ;;
             --cuda)
                 FORCE_GPU="cuda"
+                shift
+                ;;
+            --parakeet)
+                INSTALL_PARAKEET=true
                 shift
                 ;;
             --dir)
@@ -1023,6 +1074,7 @@ main() {
     echo "  - Install directory: $INSTALL_DIR"
     echo "  - GPU backend: $GPU_BACKEND"
     echo "  - OS: $OS_ID $OS_VERSION"
+    echo "  - Parakeet backend: $([[ "$INSTALL_PARAKEET" == "true" ]] && echo "yes" || echo "no (use --parakeet to enable)")"
     echo ""
 
     if ! confirm "Proceed with installation?"; then
@@ -1058,6 +1110,10 @@ main() {
         download_models
     fi
 
+    if [[ "$INSTALL_PARAKEET" == "true" ]]; then
+        install_parakeet
+    fi
+
     create_launcher_scripts
 
     if [[ "$SKIP_SERVICE" != "true" ]]; then
@@ -1070,11 +1126,20 @@ main() {
     header "Installation Complete!"
 
     echo "To run the translator:"
-    echo "  $INSTALL_DIR/translator"
+    echo "  $INSTALL_DIR/translator                # default (batch Whisper)"
+    echo "  $INSTALL_DIR/translator --streaming    # whisper_streaming (LocalAgreement-2)"
+    if [[ "$INSTALL_PARAKEET" == "true" ]]; then
+        echo "  $INSTALL_DIR/translator --parakeet     # Parakeet TDT 0.6b (ONNX, streaming)"
+    fi
     echo ""
     echo "To configure audio devices:"
     echo "  $INSTALL_DIR/translator-setup"
     echo ""
+    if [[ "$INSTALL_PARAKEET" != "true" ]]; then
+        echo "To enable the Parakeet streaming backend later, run:"
+        echo "  source $INSTALL_DIR/venv/bin/activate && $INSTALL_DIR/scripts/install_parakeet.sh"
+        echo ""
+    fi
 
     if [[ "$NEEDS_REBOOT" == "true" ]]; then
         warn "A system reboot is required for some changes to take effect."

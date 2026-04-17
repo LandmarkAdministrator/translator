@@ -64,13 +64,18 @@ class _HFTransformersASR(ASRBase):
         if cache_dir:
             model_kwargs["cache_dir"] = cache_dir
 
-        return hf_pipeline(
+        pipe = hf_pipeline(
             "automatic-speech-recognition",
             model=model_id,
             device=device,
             dtype=dtype,
             model_kwargs=model_kwargs,
         )
+        # English-only Whisper variants (*.en) reject language/task kwargs.
+        self._is_multilingual = getattr(
+            pipe.model.generation_config, "is_multilingual", True
+        )
+        return pipe
 
     def transcribe(self, audio, init_prompt=""):
         # init_prompt is intentionally ignored: condition_on_previous_text
@@ -83,10 +88,10 @@ class _HFTransformersASR(ASRBase):
         # pipeline triggered an UnboundLocalError inside
         # generate_with_fallback(). The HF path has its own fallback behavior
         # that proved safe at RTF 0.33 in batch mode — leave it alone.
-        gen_kwargs = {
-            "language": self.original_language,
-            "task": self.transcribe_kargs.get("task", "transcribe"),
-        }
+        gen_kwargs = {}
+        if getattr(self, "_is_multilingual", True):
+            gen_kwargs["language"] = self.original_language
+            gen_kwargs["task"] = self.transcribe_kargs.get("task", "transcribe")
 
         result = self.model(
             {"raw": audio.astype(np.float32), "sampling_rate": SAMPLE_RATE},

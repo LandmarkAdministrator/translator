@@ -30,7 +30,6 @@ DEFAULT_SETTINGS = {
             "enabled": True,
         },
     ],
-    "asr_model": "large-v3",
 }
 
 
@@ -129,14 +128,6 @@ class SettingsManager:
     def set_languages(self, languages: List[Dict[str, Any]]) -> None:
         """Set the language configurations."""
         self._settings["languages"] = languages
-
-    def get_asr_model(self) -> str:
-        """Get the ASR model size."""
-        return self.settings.get("asr_model", "large-v3")
-
-    def set_asr_model(self, model: str) -> None:
-        """Set the ASR model size."""
-        self._settings["asr_model"] = model
 
 
 # Global settings manager instance
