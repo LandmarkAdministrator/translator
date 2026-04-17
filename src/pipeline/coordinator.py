@@ -331,10 +331,9 @@ class TranslationCoordinator:
             # (RTF 0.33 on this hardware, vs 0.77 for openai-whisper). Model
             # cache lives at models/asr/transformers so it's shared between
             # batch and streaming downloads.
-            streaming_model = "large-v3-turbo" if self._asr_model == "large-v3" else self._asr_model
-            print(f"  streaming backend: whisper_streaming (LocalAgreement-2) + HF transformers, model={streaming_model}")
+            print(f"  streaming backend: whisper_streaming (LocalAgreement-2) + HF transformers, model={self._asr_model}")
             self._streaming_buffer = LocalAgreementASRBuffer(
-                model_size=streaming_model,
+                model_size=self._asr_model,
                 language="en",
                 download_root=f"{self._models_dir}/asr/transformers",
             )
@@ -392,17 +391,16 @@ class TranslationCoordinator:
         # Initialize audio input
         print("\nInitializing audio input...")
         if self._streaming:
-            # Streaming mode: 3s chunks. openai-whisper has a ~2s per-call
-            # overhead regardless of chunk length, so 1s chunks gave RTF>3
-            # and the pipeline fell behind realtime. 3s amortizes the fixed
-            # cost and brings RTF below 1 on this hardware, while still
-            # emitting often enough for LocalAgreement-2 to commit useful
-            # prefixes (3-5 word phrases instead of single words).
+            # Streaming mode: 1.5s chunks. The HF transformers backend runs at
+            # RTF 0.46 on this hardware, so we can afford the shorter chunk —
+            # smaller MinChunkSize matches the whisper_streaming paper's best
+            # WER/latency tradeoff (1s at 8.1% WER) and gives LocalAgreement-2
+            # more opportunities to commit, reducing boundary deletions.
             self._audio_input = AudioInputStream(
                 device=self._input_device,
                 sample_rate=16000,
-                target_chunk_duration=3.0,
-                max_chunk_duration=3.0,
+                target_chunk_duration=1.5,
+                max_chunk_duration=1.5,
                 silence_threshold=0.02,
                 min_silence_duration=10.0,   # Don't split on silence; just time-slice
             )
