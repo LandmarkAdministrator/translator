@@ -247,6 +247,35 @@ class TranslationService:
         """Get the device being used."""
         return self._device
 
+    def _build_gen_kwargs(self, input_token_len: int) -> dict:
+        """Build generate() kwargs per backend.
+
+        Opus-MT keeps the original 4-beam search — it's short, cheap, and was
+        proven good in prior runs. NLLB on this hardware needs much tighter
+        constraints: greedy (beams=1) is 3-4x faster and, combined with
+        anti-repetition settings and a bounded max_new_tokens, prevents the
+        "Mr. Mr. Mr. ... " hallucination spirals we saw with 3.3B.
+        """
+        if self._backend == "nllb":
+            # Output length bounded by input length (translations rarely grow
+            # more than ~2x between related languages). Plus a small floor so
+            # 1-token inputs still have room, and a ceiling from max_length.
+            max_new = max(16, min(self.max_length, int(input_token_len * 2) + 16))
+            return dict(
+                forced_bos_token_id=self._nllb_tgt_id,
+                max_new_tokens=max_new,
+                num_beams=1,
+                do_sample=False,
+                repetition_penalty=1.3,
+                no_repeat_ngram_size=3,
+            )
+        # Opus-MT (MarianMT): preserve the original beam-search config.
+        return dict(
+            max_length=self.max_length,
+            num_beams=4,
+            early_stopping=True,
+        )
+
     def translate(self, text: str) -> TranslationResult:
         """
         Translate text from source to target language.
@@ -283,13 +312,7 @@ class TranslationService:
 
         # Generate translation
         import torch
-        gen_kwargs = dict(
-            max_length=self.max_length,
-            num_beams=4,
-            early_stopping=True,
-        )
-        if self._backend == "nllb":
-            gen_kwargs["forced_bos_token_id"] = self._nllb_tgt_id
+        gen_kwargs = self._build_gen_kwargs(inputs["input_ids"].shape[-1])
         with torch.no_grad():
             outputs = self._model.generate(**inputs, **gen_kwargs)
 
@@ -351,13 +374,7 @@ class TranslationService:
 
         # Generate translations
         import torch
-        gen_kwargs = dict(
-            max_length=self.max_length,
-            num_beams=4,
-            early_stopping=True,
-        )
-        if self._backend == "nllb":
-            gen_kwargs["forced_bos_token_id"] = self._nllb_tgt_id
+        gen_kwargs = self._build_gen_kwargs(inputs["input_ids"].shape[-1])
         with torch.no_grad():
             outputs = self._model.generate(**inputs, **gen_kwargs)
 

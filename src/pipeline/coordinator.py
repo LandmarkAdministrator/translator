@@ -26,6 +26,7 @@ from audio.output_stream import AudioOutputStream, SharedStereoOutput, ChannelOu
 from pipeline.asr import ASRService, WhisperTransformersService, TranscriptionResult
 from pipeline.asr_process import ASRProcess, ASRChunkMeta
 from pipeline.parakeet_asr import ParakeetASRBuffer
+from pipeline.sentence_buffer import SentenceBuffer
 from pipeline.translation import TranslationService, TranslationResult
 from pipeline.tts import TTSService, SpeechResult
 
@@ -274,6 +275,11 @@ class TranslationCoordinator:
         self._parakeet = parakeet
         self._parakeet_model = parakeet_model
         self._parakeet_buffer = None
+        # Sentence buffer sits between Parakeet's token-level commits and the
+        # per-language translation pipelines. Only used in parakeet streaming
+        # mode; batch mode already delivers phrase/sentence-sized Whisper
+        # segments to pipeline.process().
+        self._sentence_buffer: Optional[SentenceBuffer] = None
 
         # Default languages if not specified
         if languages is None:
@@ -335,6 +341,20 @@ class TranslationCoordinator:
                 cache_dir=f"{self._models_dir}/asr/parakeet",
             )
             self._parakeet_buffer.load()
+            # Tunable via env; defaults tuned for a formal speaker cadence.
+            # SENTENCE_BUFFER_OFF=1 disables buffering entirely (fragments go
+            # straight to translation, the old behavior — useful for A/B tests).
+            if os.environ.get("SENTENCE_BUFFER_OFF", "").strip() == "1":
+                self._sentence_buffer = None
+                print("  sentence_buffer: DISABLED (fragments go direct to translate)")
+            else:
+                silence_to = float(os.environ.get("SENTENCE_SILENCE_TIMEOUT", "2.0"))
+                hard_to = float(os.environ.get("SENTENCE_HARD_TIMEOUT", "10.0"))
+                self._sentence_buffer = SentenceBuffer(
+                    silence_timeout=silence_to,
+                    hard_timeout=hard_to,
+                )
+                print(f"  sentence_buffer: silence={silence_to}s hard={hard_to}s")
         else:
             download_root = (
                 f"{self._models_dir}/asr/transformers"
@@ -604,23 +624,48 @@ class TranslationCoordinator:
         except Exception as e:
             logger.error("Streaming ASR callback error: {}", e)
             return
-        if result is None:
+
+        # Fan new Parakeet fragments into the sentence buffer (or straight
+        # through if buffering is disabled). We always invoke tick() on the
+        # sentence buffer — even when Parakeet has nothing new this chunk — so
+        # that the silence-timeout path can fire after the speaker pauses.
+        if result is not None:
+            new_text, seg_start_wall, asr_time = result
+            self._stats['transcriptions'] += 1
+            self._stats['total_asr_time'] += asr_time
+
+            logger.info(
+                "[EN-frag] {} | mode=streaming | asr={:.3f}s",
+                new_text, asr_time,
+            )
+
+            if self._sentence_buffer is not None:
+                emit = self._sentence_buffer.feed(new_text, seg_start_wall, asr_time)
+            else:
+                emit = (new_text, seg_start_wall, asr_time)
+
+            if emit is not None:
+                self._emit_to_pipelines(*emit)
             return
 
-        new_text, seg_start_wall, asr_time = result
+        # No new fragment — still run a silence tick in case a sentence is
+        # sitting in the buffer waiting for the speaker's pause to be long
+        # enough.
+        if self._sentence_buffer is not None:
+            emit = self._sentence_buffer.tick()
+            if emit is not None:
+                self._emit_to_pipelines(*emit)
 
-        self._stats['transcriptions'] += 1
-        self._stats['total_asr_time'] += asr_time
-
+    def _emit_to_pipelines(self, text: str, start_wall: float, asr_time: float) -> None:
+        """Dispatch a fully-formed utterance to every language pipeline."""
         logger.info(
-            "[EN] {} | mode=streaming | asr={:.3f}s",
-            new_text, asr_time,
+            "[EN] {} | mode=streaming/sentence | asr={:.3f}s",
+            text, asr_time,
         )
-
         for pipeline in self._pipelines.values():
             pipeline.process(
-                new_text,
-                chunk_start_time=seg_start_wall,
+                text,
+                chunk_start_time=start_wall,
                 chunk_duration=0.0,
                 asr_time=asr_time,
             )
@@ -733,13 +778,23 @@ class TranslationCoordinator:
                 self._audio_input.stop()
 
             # Flush any remaining text in the Parakeet streaming buffer
+            # first (it may produce one last fragment), then drain the
+            # sentence buffer so any in-progress sentence reaches translation.
             if self._parakeet and self._parakeet_buffer:
                 flush_result = self._parakeet_buffer.flush()
                 if flush_result:
                     text, start_wall, asr_time = flush_result
-                    logger.info("[EN] {} | mode=streaming/flush | asr={:.3f}s", text, asr_time)
-                    for pipeline in self._pipelines.values():
-                        pipeline.process(text, chunk_start_time=start_wall, asr_time=asr_time)
+                    logger.info("[EN-frag] {} | mode=streaming/flush | asr={:.3f}s", text, asr_time)
+                    if self._sentence_buffer is not None:
+                        emit = self._sentence_buffer.feed(text, start_wall, asr_time)
+                        if emit is not None:
+                            self._emit_to_pipelines(*emit)
+                    else:
+                        self._emit_to_pipelines(text, start_wall, asr_time)
+            if self._sentence_buffer is not None:
+                emit = self._sentence_buffer.flush()
+                if emit is not None:
+                    self._emit_to_pipelines(*emit)
 
             # Wait for pipelines to drain their queues
             try:
