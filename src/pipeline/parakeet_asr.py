@@ -217,13 +217,30 @@ class ParakeetASRBuffer:
         return (text, text_start_wall, asr_time)
 
     def _maybe_trim(self, tokens, timestamps, stable_len: int) -> None:
-        """Trim audio buffer up to the end of the last committed token."""
+        """Trim audio buffer up to the end of the last committed token.
+
+        onnx-asr returns per-token timestamps as the token's *start* time. So
+        `timestamps[stable_len - 1]` is the start of the last committed token,
+        not its end — cutting there retains the audio of that already-committed
+        word and the next decode re-transcribes it (causing duplicate emits
+        like "prescribed" → later "ed nearly..." → later "Our forebears
+        prescribed nearly..."). We cut at the *next* token's start when it
+        exists (the gap between committed and uncommitted), and otherwise fall
+        back to the last committed timestamp plus a margin that comfortably
+        skips one spoken token.
+        """
         buffer_sec = len(self._buffer) / SAMPLE_RATE
         if buffer_sec <= MAX_BUFFER_SEC:
             return
         if stable_len <= 0:
             return
-        cut_ts = float(timestamps[stable_len - 1])
+        # Preferred cut point: start of the first *uncommitted* token.
+        if stable_len < len(timestamps):
+            cut_ts = float(timestamps[stable_len])
+        else:
+            # No uncommitted token to anchor on; step past the last committed
+            # one by a typical word-duration margin.
+            cut_ts = float(timestamps[stable_len - 1]) + 0.35
         cut_samples = int(cut_ts * SAMPLE_RATE)
         if cut_samples <= 0 or cut_samples >= len(self._buffer):
             return
