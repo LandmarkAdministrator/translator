@@ -1,8 +1,11 @@
 """
 TTS (Text-to-Speech) Service
 
-Uses Piper for fast, high-quality neural text-to-speech synthesis.
-Piper uses ONNX Runtime for efficient inference.
+Default backend: Piper (ONNX, fast neural VITS) — one voice per language.
+Optional MMS backend: Meta's facebook/mms-tts-<lang> (VITS via transformers),
+enabled per-language by env var e.g. `HT_TTS=mms` to use mms-tts-hat for
+Haitian Creole. MMS is the only viable natively-trained Haitian voice —
+Piper has no ht model, so the default Piper wiring falls back to French.
 """
 
 import os
@@ -14,6 +17,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, List
 import numpy as np
+
+
+# MMS-TTS model ids by our 2-letter language code.
+MMS_MODELS = {
+    "ht": "facebook/mms-tts-hat",
+    "es": "facebook/mms-tts-spa",
+    "fr": "facebook/mms-tts-fra",
+}
 
 
 @dataclass
@@ -91,8 +102,23 @@ class TTSService:
         self._download_root = Path(download_root)
         self._download_root.mkdir(parents=True, exist_ok=True)
 
-        # Resolve model
-        if model_path:
+        # Per-language MMS opt-in: env var `{LANG_UPPER}_TTS=mms` (e.g. HT_TTS=mms)
+        # switches this language to facebook/mms-tts-<lang>. Sample rate is read
+        # from the model config at load() time; we init with a plausible default.
+        env_var = f"{language.upper()}_TTS"
+        self._use_mms = (os.environ.get(env_var, "").strip().lower() == "mms")
+
+        if self._use_mms:
+            if language not in MMS_MODELS:
+                raise ValueError(
+                    f"MMS-TTS requested for '{language}' but no model id is known. "
+                    f"Known: {sorted(MMS_MODELS)}"
+                )
+            self._model_name = MMS_MODELS[language]
+            self._model_path = None
+            # Typical MMS-TTS sampling rate; overridden in load() from config.
+            self._sample_rate = 16000
+        elif model_path:
             self._model_path = Path(model_path)
             self._model_name = self._model_path.stem
         else:
@@ -112,6 +138,9 @@ class TTSService:
             self._model_path = None
 
         self._voice = None
+        # MMS-specific handles
+        self._mms_model = None
+        self._mms_tokenizer = None
         self._loaded = False
 
     def _get_model_path(self) -> Path:
@@ -197,6 +226,25 @@ class TTSService:
         if self._loaded:
             return
 
+        if self._use_mms:
+            from transformers import VitsModel, AutoTokenizer
+            # Keep MMS models alongside other TTS assets so they share the
+            # gitignore and backup story.
+            mms_cache = str(self._download_root / "mms")
+            Path(mms_cache).mkdir(parents=True, exist_ok=True)
+            print(f"Loading TTS model '{self._model_name}' (MMS/VITS)...")
+            self._mms_tokenizer = AutoTokenizer.from_pretrained(
+                self._model_name, cache_dir=mms_cache
+            )
+            self._mms_model = VitsModel.from_pretrained(
+                self._model_name, cache_dir=mms_cache
+            )
+            self._mms_model.eval()
+            self._sample_rate = int(self._mms_model.config.sampling_rate)
+            self._loaded = True
+            print(f"TTS model loaded: {self.language} ({self._model_name}) @ {self._sample_rate}Hz [MMS]")
+            return
+
         from piper import PiperVoice
 
         model_path = self._get_model_path()
@@ -217,6 +265,12 @@ class TTSService:
         if self._voice is not None:
             del self._voice
             self._voice = None
+        if self._mms_model is not None:
+            del self._mms_model
+            self._mms_model = None
+        if self._mms_tokenizer is not None:
+            del self._mms_tokenizer
+            self._mms_tokenizer = None
         self._loaded = False
 
     @property
@@ -254,22 +308,30 @@ class TTSService:
                 processing_time=0.0,
             )
 
-        # Synthesize using Piper.
-        # Use length_scale (native VITS parameter) instead of numpy resampling —
-        # length_scale adjusts phoneme duration without changing pitch.
-        # length_scale = 1/speed: speed=0.9 → length_scale≈1.11 (10% slower)
-        from piper.config import SynthesisConfig
-        syn_config = SynthesisConfig(length_scale=1.0 / self.speed) if self.speed != 1.0 else None
-
-        audio_chunks = []
-        for chunk in self._voice.synthesize(text, syn_config=syn_config):
-            if hasattr(chunk, 'audio_float_array'):
-                audio_chunks.append(chunk.audio_float_array)
-
-        if audio_chunks:
-            audio = np.concatenate(audio_chunks).astype(np.float32)
+        if self._use_mms:
+            import torch
+            inputs = self._mms_tokenizer(text, return_tensors="pt")
+            with torch.no_grad():
+                out = self._mms_model(**inputs).waveform
+            # VitsModel returns (batch, samples); we synth one text at a time.
+            audio = out[0].cpu().numpy().astype(np.float32)
         else:
-            audio = np.array([], dtype=np.float32)
+            # Synthesize using Piper.
+            # Use length_scale (native VITS parameter) instead of numpy resampling —
+            # length_scale adjusts phoneme duration without changing pitch.
+            # length_scale = 1/speed: speed=0.9 → length_scale≈1.11 (10% slower)
+            from piper.config import SynthesisConfig
+            syn_config = SynthesisConfig(length_scale=1.0 / self.speed) if self.speed != 1.0 else None
+
+            audio_chunks = []
+            for chunk in self._voice.synthesize(text, syn_config=syn_config):
+                if hasattr(chunk, 'audio_float_array'):
+                    audio_chunks.append(chunk.audio_float_array)
+
+            if audio_chunks:
+                audio = np.concatenate(audio_chunks).astype(np.float32)
+            else:
+                audio = np.array([], dtype=np.float32)
 
         processing_time = time.time() - start_time
 

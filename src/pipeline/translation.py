@@ -1,8 +1,9 @@
 """
 Translation Service
 
-Uses Helsinki-NLP Opus-MT models with CTranslate2 for efficient translation.
-Falls back to Hugging Face Transformers if CTranslate2 is not available.
+Default: Helsinki-NLP Opus-MT via Transformers (MarianMT), CPU.
+Optional: Meta NLLB-200 via Transformers when NLLB_MODEL env var is set
+(e.g. facebook/nllb-200-distilled-600M / 1.3B / facebook/nllb-200-3.3B).
 """
 
 import os
@@ -11,6 +12,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 import re
+
+
+# NLLB uses BCP-47-ish FLORES codes, not our 2-letter internal codes.
+NLLB_LANG_CODES = {
+    "en": "eng_Latn",
+    "es": "spa_Latn",
+    "ht": "hat_Latn",
+    "fr": "fra_Latn",
+    "pt": "por_Latn",
+    "de": "deu_Latn",
+    "it": "ita_Latn",
+    "zh": "zho_Hans",
+    "ja": "jpn_Jpan",
+    "ko": "kor_Hang",
+    "ar": "arb_Arab",
+    "ru": "rus_Cyrl",
+}
 
 
 @dataclass
@@ -75,22 +93,51 @@ class TranslationService:
         self.target_language = target_language
         self.max_length = max_length
 
-        # Resolve model name
-        if model_name:
-            self._model_name = model_name
-        else:
-            key = (source_language, target_language)
-            if key in self.MODEL_MAP:
-                self._model_name = self.MODEL_MAP[key]
-            else:
+        # NLLB takes precedence via env var; if set, we use it regardless of
+        # any explicit Opus-MT model_name. This keeps the switch a single
+        # environment variable with no CLI plumbing through coordinator.
+        nllb_env = os.environ.get("NLLB_MODEL", "").strip()
+        if nllb_env:
+            self._backend = "nllb"
+            self._model_name = nllb_env
+            self._nllb_src = NLLB_LANG_CODES.get(source_language)
+            self._nllb_tgt = NLLB_LANG_CODES.get(target_language)
+            if not self._nllb_src or not self._nllb_tgt:
                 raise ValueError(
-                    f"No model found for {source_language} -> {target_language}. "
-                    f"Available pairs: {list(self.MODEL_MAP.keys())}"
+                    f"NLLB: no FLORES code for {source_language} -> {target_language}. "
+                    f"Known: {sorted(NLLB_LANG_CODES)}"
                 )
+        else:
+            self._backend = "opus"
+            if model_name:
+                self._model_name = model_name
+            else:
+                key = (source_language, target_language)
+                if key in self.MODEL_MAP:
+                    self._model_name = self.MODEL_MAP[key]
+                else:
+                    raise ValueError(
+                        f"No model found for {source_language} -> {target_language}. "
+                        f"Available pairs: {list(self.MODEL_MAP.keys())}"
+                    )
 
-        # Translation runs on CPU — intentional design choice.
-        # MarianMT via Transformers runs efficiently on CPU for sentence-length inputs.
-        self._device = "cpu"
+        # Device selection:
+        #   Opus-MT is fast on CPU and that's the long-standing default.
+        #   NLLB (especially 1.3B / 3.3B) is much happier on GPU — we honor
+        #   NLLB_DEVICE=cpu|cuda and otherwise auto-detect cuda availability
+        #   for NLLB only. Opus-MT stays pinned to CPU.
+        if self._backend == "nllb":
+            env_dev = os.environ.get("NLLB_DEVICE", "").strip().lower()
+            if env_dev in ("cpu", "cuda"):
+                self._device = env_dev
+            else:
+                try:
+                    import torch
+                    self._device = "cuda" if torch.cuda.is_available() else "cpu"
+                except Exception:
+                    self._device = "cpu"
+        else:
+            self._device = "cpu"
 
         # Model storage
         if download_root is None:
@@ -108,26 +155,40 @@ class TranslationService:
         if self._loaded:
             return
 
-        from transformers import MarianMTModel, MarianTokenizer
+        print(f"Loading translation model '{self._model_name}' (backend={self._backend})...")
 
-        print(f"Loading translation model '{self._model_name}'...")
-
-        self._tokenizer = MarianTokenizer.from_pretrained(
-            self._model_name,
-            cache_dir=self._download_root,
-        )
-
-        self._model = MarianMTModel.from_pretrained(
-            self._model_name,
-            cache_dir=self._download_root,
-        )
+        if self._backend == "nllb":
+            from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self._model_name,
+                cache_dir=self._download_root,
+                src_lang=self._nllb_src,
+            )
+            self._model = AutoModelForSeq2SeqLM.from_pretrained(
+                self._model_name,
+                cache_dir=self._download_root,
+            )
+            # Cache target token id for generate()'s forced_bos_token_id.
+            # Transformers 5.x removed `tokenizer.lang_code_to_id`; use
+            # convert_tokens_to_ids which still works across versions.
+            self._nllb_tgt_id = self._tokenizer.convert_tokens_to_ids(self._nllb_tgt)
+        else:
+            from transformers import MarianMTModel, MarianTokenizer
+            self._tokenizer = MarianTokenizer.from_pretrained(
+                self._model_name,
+                cache_dir=self._download_root,
+            )
+            self._model = MarianMTModel.from_pretrained(
+                self._model_name,
+                cache_dir=self._download_root,
+            )
 
         # Move to device
         self._model = self._model.to(self._device)
         self._model.eval()
 
         self._loaded = True
-        print(f"Translation model loaded: {self.source_language} -> {self.target_language}")
+        print(f"Translation model loaded: {self.source_language} -> {self.target_language} ({self._backend})")
 
     def unload(self) -> None:
         """Unload the model to free memory."""
@@ -187,13 +248,15 @@ class TranslationService:
 
         # Generate translation
         import torch
+        gen_kwargs = dict(
+            max_length=self.max_length,
+            num_beams=4,
+            early_stopping=True,
+        )
+        if self._backend == "nllb":
+            gen_kwargs["forced_bos_token_id"] = self._nllb_tgt_id
         with torch.no_grad():
-            outputs = self._model.generate(
-                **inputs,
-                max_length=self.max_length,
-                num_beams=4,
-                early_stopping=True,
-            )
+            outputs = self._model.generate(**inputs, **gen_kwargs)
 
         # Decode
         translated_text = self._tokenizer.decode(
@@ -253,13 +316,15 @@ class TranslationService:
 
         # Generate translations
         import torch
+        gen_kwargs = dict(
+            max_length=self.max_length,
+            num_beams=4,
+            early_stopping=True,
+        )
+        if self._backend == "nllb":
+            gen_kwargs["forced_bos_token_id"] = self._nllb_tgt_id
         with torch.no_grad():
-            outputs = self._model.generate(
-                **inputs,
-                max_length=self.max_length,
-                num_beams=4,
-                early_stopping=True,
-            )
+            outputs = self._model.generate(**inputs, **gen_kwargs)
 
         # Decode
         translated_texts = self._tokenizer.batch_decode(
