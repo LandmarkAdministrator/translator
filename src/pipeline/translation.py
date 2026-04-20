@@ -10,8 +10,14 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 import re
+
+
+# Shared NLLB weights across target languages. NLLB is multilingual — we load
+# the model once and each TranslationService instance only keeps its own
+# tokenizer + forced_bos_token_id. Keyed by (model_name, device, dtype).
+_NLLB_CACHE: Dict[Tuple[str, str, str], object] = {}
 
 
 # NLLB uses BCP-47-ish FLORES codes, not our 2-letter internal codes.
@@ -158,20 +164,51 @@ class TranslationService:
         print(f"Loading translation model '{self._model_name}' (backend={self._backend})...")
 
         if self._backend == "nllb":
+            import torch
             from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+
+            # Tokenizer is small and per-instance (each language pins its own
+            # src_lang). Cache it alongside the model for speed on 2nd+ load.
             self._tokenizer = AutoTokenizer.from_pretrained(
                 self._model_name,
                 cache_dir=self._download_root,
                 src_lang=self._nllb_src,
             )
-            self._model = AutoModelForSeq2SeqLM.from_pretrained(
-                self._model_name,
-                cache_dir=self._download_root,
-            )
-            # Cache target token id for generate()'s forced_bos_token_id.
-            # Transformers 5.x removed `tokenizer.lang_code_to_id`; use
-            # convert_tokens_to_ids which still works across versions.
+            # Transformers 5.x removed tokenizer.lang_code_to_id; this works
+            # across versions.
             self._nllb_tgt_id = self._tokenizer.convert_tokens_to_ids(self._nllb_tgt)
+
+            # bf16 on GPU keeps the 3.3B model inside a 16 GB VRAM budget and
+            # is significantly faster on RDNA3.5. On CPU we keep fp32.
+            dtype_env = os.environ.get("NLLB_DTYPE", "").strip().lower()
+            if dtype_env in ("fp16", "float16"):
+                dtype = torch.float16
+            elif dtype_env in ("bf16", "bfloat16"):
+                dtype = torch.bfloat16
+            elif dtype_env in ("fp32", "float32"):
+                dtype = torch.float32
+            else:
+                dtype = torch.bfloat16 if self._device == "cuda" else torch.float32
+
+            cache_key = (self._model_name, self._device, str(dtype))
+            shared = _NLLB_CACHE.get(cache_key)
+            if shared is not None:
+                # Share weights with an earlier-loaded pipeline (e.g. Spanish).
+                # NLLB routes to the target language at generate() time.
+                self._model = shared
+                print(
+                    f"NLLB weights shared from cache (key={cache_key}); "
+                    f"not reloading to GPU"
+                )
+            else:
+                self._model = AutoModelForSeq2SeqLM.from_pretrained(
+                    self._model_name,
+                    cache_dir=self._download_root,
+                    dtype=dtype,
+                )
+                self._model = self._model.to(self._device)
+                self._model.eval()
+                _NLLB_CACHE[cache_key] = self._model
         else:
             from transformers import MarianMTModel, MarianTokenizer
             self._tokenizer = MarianTokenizer.from_pretrained(
@@ -182,13 +219,11 @@ class TranslationService:
                 self._model_name,
                 cache_dir=self._download_root,
             )
-
-        # Move to device
-        self._model = self._model.to(self._device)
-        self._model.eval()
+            self._model = self._model.to(self._device)
+            self._model.eval()
 
         self._loaded = True
-        print(f"Translation model loaded: {self.source_language} -> {self.target_language} ({self._backend})")
+        print(f"Translation model loaded: {self.source_language} -> {self.target_language} ({self._backend}, device={self._device})")
 
     def unload(self) -> None:
         """Unload the model to free memory."""
