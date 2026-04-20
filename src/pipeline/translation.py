@@ -7,6 +7,7 @@ Optional: Meta NLLB-200 via Transformers when NLLB_MODEL env var is set
 """
 
 import os
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +18,11 @@ import re
 # Shared NLLB weights across target languages. NLLB is multilingual — we load
 # the model once and each TranslationService instance only keeps its own
 # tokenizer + forced_bos_token_id. Keyed by (model_name, device, dtype).
-_NLLB_CACHE: Dict[Tuple[str, str, str], object] = {}
+# Value is (model, lock): the lock serializes generate() calls so two
+# language pipelines can't hit the same GPU kernel concurrently (PyTorch
+# forward/generate on a shared model is not thread-safe — 1.3B on ROCm
+# reliably segfaults without this).
+_NLLB_CACHE: Dict[Tuple[str, str, str], Tuple[object, threading.Lock]] = {}
 
 
 # NLLB uses BCP-47-ish FLORES codes, not our 2-letter internal codes.
@@ -155,6 +160,12 @@ class TranslationService:
         self._model = None
         self._tokenizer = None
         self._loaded = False
+        # Serializes generate() calls. For NLLB this is replaced at load()
+        # time with the cache's shared lock so two language pipelines can't
+        # run generate() concurrently on the same GPU model (that segfaults
+        # PyTorch/ROCm). MarianMT uses a per-instance lock that has no
+        # contention (each instance owns its own model).
+        self._gen_lock: threading.Lock = threading.Lock()
 
     def load(self) -> None:
         """Load the translation model."""
@@ -191,11 +202,12 @@ class TranslationService:
                 dtype = torch.bfloat16 if self._device == "cuda" else torch.float32
 
             cache_key = (self._model_name, self._device, str(dtype))
-            shared = _NLLB_CACHE.get(cache_key)
-            if shared is not None:
+            cached = _NLLB_CACHE.get(cache_key)
+            if cached is not None:
                 # Share weights with an earlier-loaded pipeline (e.g. Spanish).
-                # NLLB routes to the target language at generate() time.
-                self._model = shared
+                # NLLB routes to the target language at generate() time, and
+                # the shared lock serializes generate() across languages.
+                self._model, self._gen_lock = cached
                 print(
                     f"NLLB weights shared from cache (key={cache_key}); "
                     f"not reloading to GPU"
@@ -208,7 +220,8 @@ class TranslationService:
                 )
                 self._model = self._model.to(self._device)
                 self._model.eval()
-                _NLLB_CACHE[cache_key] = self._model
+                self._gen_lock = threading.Lock()
+                _NLLB_CACHE[cache_key] = (self._model, self._gen_lock)
         else:
             from transformers import MarianMTModel, MarianTokenizer
             self._tokenizer = MarianTokenizer.from_pretrained(
@@ -310,10 +323,11 @@ class TranslationService:
             max_length=self.max_length,
         ).to(self._device)
 
-        # Generate translation
+        # Generate translation — the lock serializes concurrent calls from
+        # different language pipelines that share a model (NLLB case).
         import torch
         gen_kwargs = self._build_gen_kwargs(inputs["input_ids"].shape[-1])
-        with torch.no_grad():
+        with torch.no_grad(), self._gen_lock:
             outputs = self._model.generate(**inputs, **gen_kwargs)
 
         # Decode
@@ -372,10 +386,11 @@ class TranslationService:
             max_length=self.max_length,
         ).to(self._device)
 
-        # Generate translations
+        # Generate translations — serialized across language pipelines when
+        # sharing a model (NLLB).
         import torch
         gen_kwargs = self._build_gen_kwargs(inputs["input_ids"].shape[-1])
-        with torch.no_grad():
+        with torch.no_grad(), self._gen_lock:
             outputs = self._model.generate(**inputs, **gen_kwargs)
 
         # Decode
