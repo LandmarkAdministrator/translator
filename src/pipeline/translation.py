@@ -220,6 +220,13 @@ class TranslationService:
                 )
                 self._model = self._model.to(self._device)
                 self._model.eval()
+                # NLLB's generation_config ships max_length=200, which
+                # conflicts with our per-call max_new_tokens and causes a
+                # warning on every generate(). max_new_tokens is the correct
+                # bound for us (output length scales with input), so drop
+                # max_length from the model default.
+                if hasattr(self._model, "generation_config") and self._model.generation_config is not None:
+                    self._model.generation_config.max_length = None
                 self._gen_lock = threading.Lock()
                 _NLLB_CACHE[cache_key] = (self._model, self._gen_lock)
         else:
