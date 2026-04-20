@@ -23,7 +23,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from audio.input_stream import AudioInputStream, AudioChunk
 from audio.output_stream import AudioOutputStream, SharedStereoOutput, ChannelOutputProxy
-from pipeline.asr import ASRService, WhisperTransformersService, TranscriptionResult
 from pipeline.asr_process import ASRProcess, ASRChunkMeta
 from pipeline.parakeet_asr import ParakeetASRBuffer
 from pipeline.sentence_buffer import SentenceBuffer
@@ -298,7 +297,6 @@ class TranslationCoordinator:
 
         # Components
         self._audio_input: Optional[AudioInputStream] = None
-        self._asr: Optional[ASRService] = None
         self._asr_proc: Optional[ASRProcess] = None          # batch-mode subprocess
         self._asr_result_thread: Optional[threading.Thread] = None
         self._pipelines: Dict[str, LanguagePipeline] = {}
@@ -454,8 +452,6 @@ class TranslationCoordinator:
         for shared in self._shared_outputs.values():
             shared.stop()
 
-        if self._asr:
-            self._asr.unload()
         if self._asr_proc:
             self._asr_proc.stop()
             self._asr_proc = None

@@ -18,11 +18,14 @@ import re
 # Shared NLLB weights across target languages. NLLB is multilingual — we load
 # the model once and each TranslationService instance only keeps its own
 # tokenizer + forced_bos_token_id. Keyed by (model_name, device, dtype).
-# Value is (model, lock): the lock serializes generate() calls so two
-# language pipelines can't hit the same GPU kernel concurrently (PyTorch
-# forward/generate on a shared model is not thread-safe — 1.3B on ROCm
-# reliably segfaults without this).
-_NLLB_CACHE: Dict[Tuple[str, str, str], Tuple[object, threading.Lock]] = {}
+# Value is [model, lock, refcount] (list so refcount is mutable): the lock
+# serializes generate() calls so two language pipelines can't hit the same
+# GPU kernel concurrently (PyTorch forward/generate on a shared model is not
+# thread-safe — 1.3B on ROCm reliably segfaults without this). Refcount
+# lets unload() drop the entry when the last user goes, actually freeing
+# VRAM — without it the module-level dict kept pinning the model forever.
+_NLLB_CACHE: Dict[Tuple[str, str, str], list] = {}
+_NLLB_CACHE_LOCK = threading.Lock()
 
 
 # NLLB uses BCP-47-ish FLORES codes, not our 2-letter internal codes.
@@ -139,14 +142,19 @@ class TranslationService:
         #   for NLLB only. Opus-MT stays pinned to CPU.
         if self._backend == "nllb":
             env_dev = os.environ.get("NLLB_DEVICE", "").strip().lower()
-            if env_dev in ("cpu", "cuda"):
-                self._device = env_dev
-            else:
+            if env_dev == "":
                 try:
                     import torch
                     self._device = "cuda" if torch.cuda.is_available() else "cpu"
                 except Exception:
                     self._device = "cpu"
+            elif env_dev in ("cpu", "cuda"):
+                self._device = env_dev
+            else:
+                raise ValueError(
+                    f"NLLB_DEVICE={env_dev!r} is not recognized. "
+                    f"Valid values: 'cpu', 'cuda', or unset for auto-detect."
+                )
         else:
             self._device = "cpu"
 
@@ -202,33 +210,37 @@ class TranslationService:
                 dtype = torch.bfloat16 if self._device == "cuda" else torch.float32
 
             cache_key = (self._model_name, self._device, str(dtype))
-            cached = _NLLB_CACHE.get(cache_key)
-            if cached is not None:
-                # Share weights with an earlier-loaded pipeline (e.g. Spanish).
-                # NLLB routes to the target language at generate() time, and
-                # the shared lock serializes generate() across languages.
-                self._model, self._gen_lock = cached
-                print(
-                    f"NLLB weights shared from cache (key={cache_key}); "
-                    f"not reloading to GPU"
-                )
-            else:
-                self._model = AutoModelForSeq2SeqLM.from_pretrained(
-                    self._model_name,
-                    cache_dir=self._download_root,
-                    dtype=dtype,
-                )
-                self._model = self._model.to(self._device)
-                self._model.eval()
-                # NLLB's generation_config ships max_length=200, which
-                # conflicts with our per-call max_new_tokens and causes a
-                # warning on every generate(). max_new_tokens is the correct
-                # bound for us (output length scales with input), so drop
-                # max_length from the model default.
-                if hasattr(self._model, "generation_config") and self._model.generation_config is not None:
-                    self._model.generation_config.max_length = None
-                self._gen_lock = threading.Lock()
-                _NLLB_CACHE[cache_key] = (self._model, self._gen_lock)
+            self._nllb_cache_key = cache_key  # remembered so unload() can decref
+            with _NLLB_CACHE_LOCK:
+                cached = _NLLB_CACHE.get(cache_key)
+                if cached is not None:
+                    # Share weights with an earlier-loaded pipeline (e.g. Spanish).
+                    # NLLB routes to the target language at generate() time, and
+                    # the shared lock serializes generate() across languages.
+                    self._model = cached[0]
+                    self._gen_lock = cached[1]
+                    cached[2] += 1  # bump refcount
+                    print(
+                        f"NLLB weights shared from cache (key={cache_key}, "
+                        f"refcount={cached[2]}); not reloading to GPU"
+                    )
+                else:
+                    self._model = AutoModelForSeq2SeqLM.from_pretrained(
+                        self._model_name,
+                        cache_dir=self._download_root,
+                        dtype=dtype,
+                    )
+                    self._model = self._model.to(self._device)
+                    self._model.eval()
+                    # NLLB's generation_config ships max_length=200, which
+                    # conflicts with our per-call max_new_tokens and causes a
+                    # warning on every generate(). max_new_tokens is the correct
+                    # bound for us (output length scales with input), so drop
+                    # max_length from the model default.
+                    if hasattr(self._model, "generation_config") and self._model.generation_config is not None:
+                        self._model.generation_config.max_length = None
+                    self._gen_lock = threading.Lock()
+                    _NLLB_CACHE[cache_key] = [self._model, self._gen_lock, 1]
         else:
             from transformers import MarianMTModel, MarianTokenizer
             self._tokenizer = MarianTokenizer.from_pretrained(
@@ -246,14 +258,43 @@ class TranslationService:
         print(f"Translation model loaded: {self.source_language} -> {self.target_language} ({self._backend}, device={self._device})")
 
     def unload(self) -> None:
-        """Unload the model to free memory."""
-        if self._model is not None:
+        """Unload the model to free memory.
+
+        For NLLB (shared-weight path) we decrement the cache refcount and
+        only drop the cache entry — and actually free GPU memory — when the
+        last TranslationService using it unloads. Without this, the
+        module-level _NLLB_CACHE would pin the model across the process
+        lifetime even when both language pipelines have been unloaded.
+        """
+        if self._backend == "nllb" and self._model is not None:
+            key = getattr(self, "_nllb_cache_key", None)
+            if key is not None:
+                with _NLLB_CACHE_LOCK:
+                    cached = _NLLB_CACHE.get(key)
+                    if cached is not None:
+                        cached[2] -= 1
+                        if cached[2] <= 0:
+                            del _NLLB_CACHE[key]
+            # Drop our own reference either way. If we were the last user
+            # the cache entry is gone above; the model is now dereferenced
+            # and CUDA memory will be reclaimed on next torch.cuda.empty_cache.
+            self._model = None
+            self._gen_lock = threading.Lock()  # harmless placeholder
+        elif self._model is not None:
             del self._model
             self._model = None
 
         if self._tokenizer is not None:
             del self._tokenizer
             self._tokenizer = None
+
+        # Best-effort VRAM release when we actually dropped the cache.
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
         self._loaded = False
 
@@ -277,10 +318,12 @@ class TranslationService:
         "Mr. Mr. Mr. ... " hallucination spirals we saw with 3.3B.
         """
         if self._backend == "nllb":
-            # Output length bounded by input length (translations rarely grow
-            # more than ~2x between related languages). Plus a small floor so
-            # 1-token inputs still have room, and a ceiling from max_length.
-            max_new = max(16, min(self.max_length, int(input_token_len * 2) + 16))
+            # Output length bounded by input length. NLLB output can be ~1.3-
+            # 1.5x input tokens for en→ht in particular (Creole is verbose),
+            # and the SentenceBuffer occasionally emits long hard-timeout
+            # spans. 2.5x + 32 floor gives headroom without letting the model
+            # run all the way to its old 200-token default.
+            max_new = max(32, min(self.max_length, int(input_token_len * 2.5) + 32))
             return dict(
                 forced_bos_token_id=self._nllb_tgt_id,
                 max_new_tokens=max_new,
@@ -336,6 +379,17 @@ class TranslationService:
         gen_kwargs = self._build_gen_kwargs(inputs["input_ids"].shape[-1])
         with torch.no_grad(), self._gen_lock:
             outputs = self._model.generate(**inputs, **gen_kwargs)
+
+        # Warn if NLLB hit its token budget — output was likely truncated.
+        # outputs.shape[-1] counts forced-BOS, so compare to max_new_tokens+1.
+        if self._backend == "nllb":
+            max_new = gen_kwargs.get("max_new_tokens", 0)
+            if max_new and outputs.shape[-1] >= max_new + 1:
+                print(
+                    f"NLLB {self.source_language}->{self.target_language}: "
+                    f"output hit max_new_tokens={max_new} — likely truncated "
+                    f"(input tokens={inputs['input_ids'].shape[-1]})"
+                )
 
         # Decode
         translated_text = self._tokenizer.decode(

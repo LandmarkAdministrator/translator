@@ -150,10 +150,15 @@ class SentenceBuffer:
         return None
 
     def flush(self) -> Optional[Tuple[str, float, float]]:
-        """Force-emit whatever is buffered (shutdown)."""
+        """Force-emit whatever is buffered (shutdown).
+
+        Ignores both min_emit_words AND min_emit_chars so no content is
+        dropped at session end — whatever the speaker said last should
+        reach translation.
+        """
         if not self._frags:
             return None
-        return self._emit()
+        return self._emit(force=True)
 
     # -------------------------------------------------------------- internals
 
@@ -173,7 +178,7 @@ class SentenceBuffer:
         words = [w for w in text.split() if any(c.isalnum() for c in w)]
         return len(words) >= self.min_emit_words
 
-    def _emit(self) -> Optional[Tuple[str, float, float]]:
+    def _emit(self, force: bool = False) -> Optional[Tuple[str, float, float]]:
         text = _clean_join(self._frags)
         first_wall = self._first_start_wall
         asr = self._asr_accum
@@ -182,6 +187,11 @@ class SentenceBuffer:
         self._first_recv_monotonic = 0.0
         self._last_recv_monotonic = 0.0
         self._asr_accum = 0.0
-        if len(text) < self.min_emit_chars:
+        # Force path (shutdown flush) ignores the char floor. Non-force emits
+        # from punctuation / silence / hard-timeout drop purely-punctuation
+        # remnants like "." or "".
+        if not force and len(text) < self.min_emit_chars:
+            return None
+        if not text:
             return None
         return (text, first_wall, asr)
