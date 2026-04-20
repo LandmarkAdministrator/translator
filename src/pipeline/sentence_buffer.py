@@ -71,19 +71,25 @@ class SentenceBuffer:
         silence_timeout: float = 2.0,
         hard_timeout: float = 10.0,
         min_emit_chars: int = 2,
+        min_emit_words: int = 3,
     ):
         """
         Args:
             silence_timeout: flush after this many seconds of no new fragments
                 when the buffer has pending content.
             hard_timeout: flush if the buffer has been accumulating this many
-                seconds since the first fragment, regardless of punctuation.
+                seconds since the first fragment, regardless of punctuation or
+                word count — this is the safety valve.
             min_emit_chars: don't emit anything shorter than this (in chars,
-                post-cleanup). Protects against translating stray punctuation.
+                post-cleanup). Floor against stray punctuation like ".".
+            min_emit_words: punctuation- and silence-triggered emits require at
+                least this many alphanumeric words. Hard-timeout emits and
+                shutdown flush() ignore this floor so no content is dropped.
         """
         self.silence_timeout = silence_timeout
         self.hard_timeout = hard_timeout
         self.min_emit_chars = min_emit_chars
+        self.min_emit_words = min_emit_words
 
         self._frags: List[str] = []
         self._first_start_wall: float = 0.0       # start-wall of first fragment
@@ -120,11 +126,13 @@ class SentenceBuffer:
         self._last_recv_monotonic = now
         self._asr_accum += asr_time
 
-        # Punctuation flush takes priority — no need to wait for silence.
-        if self._ends_sentence():
+        # Punctuation flush takes priority — no need to wait for silence —
+        # but only if we have enough words to be worth translating.
+        if self._ends_sentence() and self._has_min_words():
             return self._emit()
 
-        # Hard timeout can trip even on the arrival of a new fragment.
+        # Hard timeout can trip even on the arrival of a new fragment; this
+        # is a safety valve against unbounded growth, so it ignores min_words.
         if (now - self._first_recv_monotonic) >= self.hard_timeout:
             return self._emit()
 
@@ -135,7 +143,7 @@ class SentenceBuffer:
         if not self._frags:
             return None
         now = now if now is not None else time.monotonic()
-        if (now - self._last_recv_monotonic) >= self.silence_timeout:
+        if (now - self._last_recv_monotonic) >= self.silence_timeout and self._has_min_words():
             return self._emit()
         if (now - self._first_recv_monotonic) >= self.hard_timeout:
             return self._emit()
@@ -156,6 +164,14 @@ class SentenceBuffer:
         if _ABBREV_TAIL.search(text):
             return False
         return True
+
+    def _has_min_words(self) -> bool:
+        """Count alphanumeric-bearing words; ignore pure-punctuation tokens."""
+        if self.min_emit_words <= 0:
+            return True
+        text = _clean_join(self._frags)
+        words = [w for w in text.split() if any(c.isalnum() for c in w)]
+        return len(words) >= self.min_emit_words
 
     def _emit(self) -> Optional[Tuple[str, float, float]]:
         text = _clean_join(self._frags)

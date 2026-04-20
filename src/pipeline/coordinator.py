@@ -350,11 +350,13 @@ class TranslationCoordinator:
             else:
                 silence_to = float(os.environ.get("SENTENCE_SILENCE_TIMEOUT", "2.0"))
                 hard_to = float(os.environ.get("SENTENCE_HARD_TIMEOUT", "10.0"))
+                min_words = int(os.environ.get("SENTENCE_MIN_WORDS", "3"))
                 self._sentence_buffer = SentenceBuffer(
                     silence_timeout=silence_to,
                     hard_timeout=hard_to,
+                    min_emit_words=min_words,
                 )
-                print(f"  sentence_buffer: silence={silence_to}s hard={hard_to}s")
+                print(f"  sentence_buffer: silence={silence_to}s hard={hard_to}s min_words={min_words}")
         else:
             download_root = (
                 f"{self._models_dir}/asr/transformers"
