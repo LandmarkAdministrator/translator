@@ -364,6 +364,23 @@ class TranslationService:
                 processing_time=0.0,
             )
 
+        # Short-input dictionary: NLLB/Opus-MT both hallucinate on isolated
+        # short utterances ("Amen.", "Why?", "Thank you."). An exact-match
+        # override returns the human-validated translation in O(1) before
+        # the model is ever called. Source text is checked verbatim so a
+        # legitimate longer sentence containing one of these phrases still
+        # goes through the model.
+        from pipeline.translate_short_dict import lookup as _short_lookup
+        cached = _short_lookup(text.strip(), self.target_language)
+        if cached is not None:
+            return TranslationResult(
+                source_text=text,
+                translated_text=cached,
+                source_language=self.source_language,
+                target_language=self.target_language,
+                processing_time=time.time() - start_time,
+            )
+
         # Tokenize
         inputs = self._tokenizer(
             text,
@@ -396,6 +413,20 @@ class TranslationService:
             outputs[0],
             skip_special_tokens=True,
         )
+
+        # Filter NLLB / Opus-MT loop-mode outputs ("Mr Mr Mr...", "Eisen Eisen
+        # Eisenh..."). Reuses the same heuristic the ASR layer uses on Whisper
+        # output: content-word dominance OR repeating trigram. Skipped for
+        # very short outputs (where dominance counting is meaningless).
+        if translated_text and len(translated_text.split()) >= 6:
+            from pipeline.asr import WhisperTransformersService
+            if WhisperTransformersService._is_hallucination(translated_text):
+                preview = translated_text[:80] + ("..." if len(translated_text) > 80 else "")
+                print(
+                    f"  [TRANSLATION HALLUCINATION FILTERED] "
+                    f"{self.source_language}->{self.target_language}: {preview}"
+                )
+                translated_text = ""
 
         processing_time = time.time() - start_time
 

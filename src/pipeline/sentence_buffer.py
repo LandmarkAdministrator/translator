@@ -72,6 +72,7 @@ class SentenceBuffer:
         hard_timeout: float = 10.0,
         min_emit_chars: int = 2,
         min_emit_words: int = 3,
+        max_buffer_chars: int = 800,
     ):
         """
         Args:
@@ -79,17 +80,23 @@ class SentenceBuffer:
                 when the buffer has pending content.
             hard_timeout: flush if the buffer has been accumulating this many
                 seconds since the first fragment, regardless of punctuation or
-                word count — this is the safety valve.
+                word count — this is the time-based safety valve.
             min_emit_chars: don't emit anything shorter than this (in chars,
                 post-cleanup). Floor against stray punctuation like ".".
             min_emit_words: punctuation- and silence-triggered emits require at
-                least this many alphanumeric words. Hard-timeout emits and
-                shutdown flush() ignore this floor so no content is dropped.
+                least this many alphanumeric words. Hard-timeout, size-cap,
+                and shutdown flush() ignore this floor so no content is dropped.
+            max_buffer_chars: emit immediately when the joined buffer exceeds
+                this length, even if hard_timeout hasn't tripped. Catches
+                pause-prone speech that accumulates across multiple
+                hard_timeout windows. ~800 chars is a long paragraph; NLLB
+                quality drops past sentence-level inputs anyway.
         """
         self.silence_timeout = silence_timeout
         self.hard_timeout = hard_timeout
         self.min_emit_chars = min_emit_chars
         self.min_emit_words = min_emit_words
+        self.max_buffer_chars = max_buffer_chars
 
         self._frags: List[str] = []
         self._first_start_wall: float = 0.0       # start-wall of first fragment
@@ -136,6 +143,11 @@ class SentenceBuffer:
         if (now - self._first_recv_monotonic) >= self.hard_timeout:
             return self._emit()
 
+        # Size-based safety valve — same intent as hard_timeout but watches
+        # accumulated text length instead of elapsed time.
+        if self._joined_length() >= self.max_buffer_chars:
+            return self._emit()
+
         return None
 
     def tick(self, now: Optional[float] = None) -> Optional[Tuple[str, float, float]]:
@@ -146,6 +158,8 @@ class SentenceBuffer:
         if (now - self._last_recv_monotonic) >= self.silence_timeout and self._has_min_words():
             return self._emit()
         if (now - self._first_recv_monotonic) >= self.hard_timeout:
+            return self._emit()
+        if self._joined_length() >= self.max_buffer_chars:
             return self._emit()
         return None
 
@@ -177,6 +191,9 @@ class SentenceBuffer:
         text = _clean_join(self._frags)
         words = [w for w in text.split() if any(c.isalnum() for c in w)]
         return len(words) >= self.min_emit_words
+
+    def _joined_length(self) -> int:
+        return len(_clean_join(self._frags))
 
     def _emit(self, force: bool = False) -> Optional[Tuple[str, float, float]]:
         text = _clean_join(self._frags)

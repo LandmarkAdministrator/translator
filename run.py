@@ -54,6 +54,15 @@ Examples:
                         help="Test GPU and pipeline components")
     parser.add_argument("-i", "--input",
                         help="Override input audio device (name or index)")
+    parser.add_argument("--input-file",
+                        help="Read audio from a WAV/MP3/FLAC file instead of the mic. "
+                             "Bypasses the acoustic path entirely — useful for "
+                             "reproducible offline tests. Pipeline shuts down cleanly "
+                             "when the file ends.")
+    parser.add_argument("--no-realtime", action="store_true",
+                        help="With --input-file: emit chunks as fast as possible "
+                             "instead of pacing them at wall-clock speed. Tests run "
+                             "much faster but TTS playback ordering is meaningless.")
     parser.add_argument("-l", "--languages", nargs="+",
                         help="Override target languages (es, ht, fr, pt, de)")
     parser.add_argument("--list-devices", action="store_true",
@@ -198,6 +207,8 @@ Examples:
         languages=pipeline_configs,
         parakeet=args.parakeet,
         asr_device="cuda",
+        input_file=args.input_file,
+        input_realtime=not args.no_realtime,
     )
 
     coordinator.run()

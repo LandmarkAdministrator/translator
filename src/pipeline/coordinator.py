@@ -266,6 +266,8 @@ class TranslationCoordinator:
         asr_device: str = "cuda",
         parakeet: bool = False,
         parakeet_model: str = "nemo-parakeet-tdt-0.6b-v3",
+        input_file: Optional[str] = None,
+        input_realtime: bool = True,
     ):
         self._input_device = input_device
         self._asr_model = asr_model
@@ -274,6 +276,11 @@ class TranslationCoordinator:
         self._parakeet = parakeet
         self._parakeet_model = parakeet_model
         self._parakeet_buffer = None
+        # File-input mode reads audio from a WAV/MP3/etc. instead of the mic,
+        # for reproducible offline tests. When set, the audio input thread
+        # auto-stops at EOF and the run() loop drains the pipeline cleanly.
+        self._input_file = input_file
+        self._input_realtime = input_realtime
         # Sentence buffer sits between Parakeet's token-level commits and the
         # per-language translation pipelines. Only used in parakeet streaming
         # mode; batch mode already delivers phrase/sentence-sized Whisper
@@ -349,12 +356,17 @@ class TranslationCoordinator:
                 silence_to = float(os.environ.get("SENTENCE_SILENCE_TIMEOUT", "2.0"))
                 hard_to = float(os.environ.get("SENTENCE_HARD_TIMEOUT", "10.0"))
                 min_words = int(os.environ.get("SENTENCE_MIN_WORDS", "3"))
+                max_chars = int(os.environ.get("SENTENCE_MAX_CHARS", "800"))
                 self._sentence_buffer = SentenceBuffer(
                     silence_timeout=silence_to,
                     hard_timeout=hard_to,
                     min_emit_words=min_words,
+                    max_buffer_chars=max_chars,
                 )
-                print(f"  sentence_buffer: silence={silence_to}s hard={hard_to}s min_words={min_words}")
+                print(
+                    f"  sentence_buffer: silence={silence_to}s hard={hard_to}s "
+                    f"min_words={min_words} max_chars={max_chars}"
+                )
         else:
             download_root = (
                 f"{self._models_dir}/asr/transformers"
@@ -405,9 +417,26 @@ class TranslationCoordinator:
                 pipeline.set_callback(self._on_translation_event)
                 self._pipelines[config.language_code] = pipeline
 
-        # Initialize audio input
+        # Initialize audio input — file-backed for reproducible tests, or
+        # mic-backed for live use.
         print("\nInitializing audio input...")
-        if self._parakeet:
+        if self._input_file:
+            # File mode: same chunk duration as the corresponding mic mode so
+            # downstream behavior (Parakeet rolling buffer, batch chunking)
+            # is unchanged. EOF triggers a graceful pipeline drain in run().
+            from audio.file_input_stream import FileInputStream
+            chunk_duration = 1.5 if self._parakeet else 7.0
+            self._audio_input = FileInputStream(
+                file_path=self._input_file,
+                sample_rate=16000,
+                chunk_duration=chunk_duration,
+                realtime=self._input_realtime,
+            )
+            if self._parakeet:
+                self._audio_input.add_callback(self._on_audio_chunk_streaming)
+            else:
+                self._audio_input.add_callback(self._on_audio_chunk)
+        elif self._parakeet:
             # Parakeet streaming: 1.5s chunks, time-sliced (not silence-split).
             # LocalAgreement-2 at the token level decides commit boundaries.
             self._audio_input = AudioInputStream(
@@ -765,6 +794,16 @@ class TranslationCoordinator:
         try:
             while self._running:
                 time.sleep(0.1)
+                # File-input mode: when the audio file is exhausted, raise
+                # KeyboardInterrupt to take the same drain-and-shutdown path
+                # the live mode uses for Ctrl+C. is_finished() exists only on
+                # FileInputStream — getattr keeps the mic path unaffected.
+                if getattr(self._audio_input, "is_finished", None) is not None:
+                    if self._audio_input.is_finished():
+                        print("\n" + "-" * 40)
+                        print("Audio file finished — draining pipeline.")
+                        print("-" * 40)
+                        raise KeyboardInterrupt()
         except KeyboardInterrupt:
             shutdown_phase = 1
             print("\n" + "-" * 40)
