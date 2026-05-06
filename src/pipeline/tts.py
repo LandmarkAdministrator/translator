@@ -27,6 +27,20 @@ MMS_MODELS = {
 }
 
 
+# Kokoro 82M (`hexgrad/Kokoro-82M`) per-language config:
+# (lang_code passed to KPipeline, voice id, output sample rate).
+# CPU-only — Kokoro relies on PyTorch LSTM kernels that don't have a ROCm
+# implementation today (would silently spend minutes recompiling MIOpen
+# kernels on the AMD iGPU). Validated CPU RTF ~7.95x on Ryzen AI 9 HX 370
+# in the sister batch project.
+KOKORO_REPO = "hexgrad/Kokoro-82M"
+KOKORO_VOICES = {
+    # Spanish: 'em_alex' is a neutral male voice; the leading 'e' is the
+    # Kokoro language code for Spanish.
+    "es": ("e", "em_alex", 24000),
+}
+
+
 @dataclass
 class SpeechResult:
     """Result of TTS synthesis."""
@@ -102,11 +116,16 @@ class TTSService:
         self._download_root = Path(download_root)
         self._download_root.mkdir(parents=True, exist_ok=True)
 
-        # Per-language MMS opt-in: env var `{LANG_UPPER}_TTS=mms` (e.g. HT_TTS=mms)
-        # switches this language to facebook/mms-tts-<lang>. Sample rate is read
-        # from the model config at load() time; we init with a plausible default.
+        # Per-language TTS backend selection via env var `{LANG_UPPER}_TTS`:
+        #   "mms"    → facebook/mms-tts-<lang> (Meta's multilingual VITS)
+        #   "kokoro" → hexgrad/Kokoro-82M (English/Spanish, CPU-only, very fast)
+        #   unset    → Piper (default, ONNX, CPU-only)
+        # Sample rate is read from the model config at load() time; we init
+        # with a plausible default here.
         env_var = f"{language.upper()}_TTS"
-        self._use_mms = (os.environ.get(env_var, "").strip().lower() == "mms")
+        backend_choice = os.environ.get(env_var, "").strip().lower()
+        self._use_mms = (backend_choice == "mms")
+        self._use_kokoro = (backend_choice == "kokoro")
 
         if self._use_mms:
             if language not in MMS_MODELS:
@@ -118,6 +137,18 @@ class TTSService:
             self._model_path = None
             # Typical MMS-TTS sampling rate; overridden in load() from config.
             self._sample_rate = 16000
+        elif self._use_kokoro:
+            if language not in KOKORO_VOICES:
+                raise ValueError(
+                    f"Kokoro requested for '{language}' but no voice is configured. "
+                    f"Known: {sorted(KOKORO_VOICES)}"
+                )
+            kk_lang_code, kk_voice, kk_sr = KOKORO_VOICES[language]
+            self._kokoro_lang_code = kk_lang_code
+            self._kokoro_voice = kk_voice
+            self._sample_rate = kk_sr
+            self._model_name = f"{KOKORO_REPO}:{kk_voice}"
+            self._model_path = None
         elif model_path:
             self._model_path = Path(model_path)
             self._model_name = self._model_path.stem
@@ -141,6 +172,8 @@ class TTSService:
         # MMS-specific handles
         self._mms_model = None
         self._mms_tokenizer = None
+        # Kokoro-specific handle (KPipeline)
+        self._kokoro_pipeline = None
         self._loaded = False
 
     def _get_model_path(self) -> Path:
@@ -245,6 +278,38 @@ class TTSService:
             print(f"TTS model loaded: {self.language} ({self._model_name}) @ {self._sample_rate}Hz [MMS]")
             return
 
+        if self._use_kokoro:
+            try:
+                from kokoro import KPipeline
+            except ImportError as e:
+                raise RuntimeError(
+                    "Kokoro requested but the `kokoro` package is not installed. "
+                    "Install with: pip install --no-deps kokoro misaki num2words "
+                    "espeakng-loader phonemizer-fork (full deps tree breaks on "
+                    "Python 3.13 because misaki[en] pins numpy==1.26.4)."
+                ) from e
+            kokoro_cache = str(self._download_root / "kokoro")
+            Path(kokoro_cache).mkdir(parents=True, exist_ok=True)
+            # Kokoro pulls its weights from HF the first time; cache_dir is
+            # honored via the HF_HOME env var. Set if caller didn't already.
+            os.environ.setdefault("HF_HOME", kokoro_cache)
+            print(
+                f"Loading TTS model '{KOKORO_REPO}' voice={self._kokoro_voice} "
+                f"lang={self._kokoro_lang_code} (Kokoro on CPU)..."
+            )
+            # Force CPU — Kokoro's LSTM kernels have no ROCm implementation
+            # today (would silently spend minutes recompiling MIOpen on AMD).
+            self._kokoro_pipeline = KPipeline(
+                lang_code=self._kokoro_lang_code,
+                device="cpu",
+            )
+            self._loaded = True
+            print(
+                f"TTS model loaded: {self.language} ({KOKORO_REPO}:{self._kokoro_voice}) "
+                f"@ {self._sample_rate}Hz [Kokoro]"
+            )
+            return
+
         from piper import PiperVoice
 
         model_path = self._get_model_path()
@@ -271,6 +336,9 @@ class TTSService:
         if self._mms_tokenizer is not None:
             del self._mms_tokenizer
             self._mms_tokenizer = None
+        if self._kokoro_pipeline is not None:
+            del self._kokoro_pipeline
+            self._kokoro_pipeline = None
         self._loaded = False
 
     @property
@@ -315,6 +383,19 @@ class TTSService:
                 out = self._mms_model(**inputs).waveform
             # VitsModel returns (batch, samples); we synth one text at a time.
             audio = out[0].cpu().numpy().astype(np.float32)
+        elif self._use_kokoro:
+            # Kokoro yields (graphemes, phonemes, audio) per phrase. We
+            # concatenate all yielded audio chunks into one waveform.
+            audio_chunks = []
+            for _graphemes, _phonemes, chunk in self._kokoro_pipeline(text, voice=self._kokoro_voice):
+                if chunk is not None:
+                    if hasattr(chunk, "cpu"):  # torch tensor
+                        chunk = chunk.cpu().numpy()
+                    audio_chunks.append(np.asarray(chunk, dtype=np.float32))
+            if audio_chunks:
+                audio = np.concatenate(audio_chunks).astype(np.float32)
+            else:
+                audio = np.array([], dtype=np.float32)
         else:
             # Synthesize using Piper.
             # Use length_scale (native VITS parameter) instead of numpy resampling —

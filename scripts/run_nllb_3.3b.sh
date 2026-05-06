@@ -14,11 +14,14 @@ cd "$(dirname "$0")/.."
 
 export NLLB_MODEL="facebook/nllb-200-3.3B"
 export HT_TTS="mms"
+export ES_TTS="kokoro"
 
 echo "============================================================"
-echo "Parakeet ASR + NLLB-200 3.3B translation + MMS-TTS (ht)"
-echo "NLLB_MODEL=$NLLB_MODEL"
-echo "NLLB_DEVICE=${NLLB_DEVICE:-auto}  HT_TTS=$HT_TTS"
+echo "Parakeet ASR + NLLB-200 3.3B translation"
+echo "  ES TTS: Kokoro (em_alex)"
+echo "  HT TTS: facebook/mms-tts-hat"
+echo "  NLLB_DEVICE=${NLLB_DEVICE:-auto}"
+echo "  WARNING: 3.3B in bf16 has hallucinated on this hardware in prior runs."
 echo "============================================================"
 
 exec ./venv/bin/python run.py --parakeet "$@"
