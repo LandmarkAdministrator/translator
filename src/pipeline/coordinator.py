@@ -274,7 +274,11 @@ class TranslationCoordinator:
         self._asr_device = asr_device
         self._models_dir = models_dir or str(Path(__file__).parent.parent.parent / "models")
         self._parakeet = parakeet
-        self._parakeet_model = parakeet_model
+        # PARAKEET_MODEL env var overrides the default model id. Lets you
+        # swap to e.g. nemo-parakeet-tdt-1.1b without touching code or
+        # adding a CLI flag — same pattern as NLLB_MODEL for translation.
+        env_parakeet = os.environ.get("PARAKEET_MODEL", "").strip()
+        self._parakeet_model = env_parakeet or parakeet_model
         self._parakeet_buffer = None
         # File-input mode reads audio from a WAV/MP3/etc. instead of the mic,
         # for reproducible offline tests. When set, the audio input thread
