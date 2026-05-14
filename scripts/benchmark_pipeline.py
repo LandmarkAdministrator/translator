@@ -134,12 +134,14 @@ PARAKEET_MODELS = [
 
 
 def benchmark_parakeet(model_id: str, audio_path: Path, out_dir: Path,
-                       device: str, providers: Optional[List[str]] = None) -> StageResult:
-    """Run a single Parakeet model over the entire audio in one shot.
+                       device: str, providers: Optional[List[str]] = None,
+                       chunk_seconds: float = 30.0) -> StageResult:
+    """Run a single Parakeet model over the audio in 30s chunks.
 
-    onnx-asr's recognize() processes the audio non-streaming; we use that
-    here for raw throughput. (Production runs use a streaming wrapper that
-    re-decodes a rolling buffer; that overhead is *not* included here.)
+    onnx-asr's recognize() processes a non-streaming buffer; calling it on
+    the entire 60-min audio at once allocates >16 GiB and OOMs on the 3060
+    box. Chunking matches how production uses the model (streaming wrapper
+    feeds a rolling buffer) and gives a realistic RTF.
     """
     import numpy as np
     import soundfile as sf
@@ -176,14 +178,36 @@ def benchmark_parakeet(model_id: str, audio_path: Path, out_dir: Path,
             sr = 16000
         r.audio_duration_s = len(data) / sr
 
-        t1 = time.monotonic()
-        result = model.recognize(data, sample_rate=sr)
-        r.inference_time_s = time.monotonic() - t1
+        # Chunked decode. We accumulate inference time (excluding sleep/IO)
+        # and concatenate text. Memory peaks within a single chunk window,
+        # not across the whole file.
+        chunk_samples = int(chunk_seconds * sr)
+        total_inference = 0.0
+        all_text_parts: List[str] = []
+        all_tokens_count = 0
+        n_chunks = 0
+        offset = 0
+        while offset < len(data):
+            end = min(offset + chunk_samples, len(data))
+            chunk = data[offset:end]
+            t1 = time.monotonic()
+            result = model.recognize(chunk, sample_rate=sr)
+            total_inference += time.monotonic() - t1
+            piece = getattr(result, "text", "") or ""
+            if not piece:
+                tokens = list(getattr(result, "tokens", []) or [])
+                piece = " ".join(tokens)
+            all_text_parts.append(piece)
+            all_tokens_count += len(list(getattr(result, "tokens", []) or []))
+            n_chunks += 1
+            offset = end
 
-        text = getattr(result, "text", "") or " ".join(getattr(result, "tokens", []) or [])
-        tokens = list(getattr(result, "tokens", []) or [])
-        r.n_items = len(tokens)
+        r.inference_time_s = total_inference
+        r.n_items = all_tokens_count
         r.rtf = r.inference_time_s / r.audio_duration_s if r.audio_duration_s else 0.0
+        r.extras["chunks"] = n_chunks
+        r.extras["chunk_seconds"] = chunk_seconds
+        text = "\n".join(p for p in all_text_parts if p)
 
         # Save transcript
         out_file = out_dir / f"asr_{model_id.replace('/', '_')}_{device}.txt"
