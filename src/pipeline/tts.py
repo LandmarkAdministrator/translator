@@ -172,8 +172,10 @@ class TTSService:
         # MMS-specific handles
         self._mms_model = None
         self._mms_tokenizer = None
+        self._mms_device = "cpu"
         # Kokoro-specific handle (KPipeline)
         self._kokoro_pipeline = None
+        self._kokoro_device = "cpu"
         self._loaded = False
 
     def _get_model_path(self) -> Path:
@@ -260,22 +262,30 @@ class TTSService:
             return
 
         if self._use_mms:
+            import torch
             from transformers import VitsModel, AutoTokenizer
             # Keep MMS models alongside other TTS assets so they share the
             # gitignore and backup story.
             mms_cache = str(self._download_root / "mms")
             Path(mms_cache).mkdir(parents=True, exist_ok=True)
-            print(f"Loading TTS model '{self._model_name}' (MMS/VITS)...")
+            # Device: env var override, else auto (cuda when available).
+            env_dev = os.environ.get("MMS_DEVICE", "").strip().lower()
+            if env_dev in ("cpu", "cuda"):
+                mms_device = env_dev
+            else:
+                mms_device = "cuda" if torch.cuda.is_available() else "cpu"
+            self._mms_device = mms_device
+            print(f"Loading TTS model '{self._model_name}' (MMS/VITS, device={mms_device})...")
             self._mms_tokenizer = AutoTokenizer.from_pretrained(
                 self._model_name, cache_dir=mms_cache
             )
             self._mms_model = VitsModel.from_pretrained(
                 self._model_name, cache_dir=mms_cache
-            )
+            ).to(mms_device)
             self._mms_model.eval()
             self._sample_rate = int(self._mms_model.config.sampling_rate)
             self._loaded = True
-            print(f"TTS model loaded: {self.language} ({self._model_name}) @ {self._sample_rate}Hz [MMS]")
+            print(f"TTS model loaded: {self.language} ({self._model_name}) @ {self._sample_rate}Hz [MMS, {mms_device}]")
             return
 
         if self._use_kokoro:
@@ -288,25 +298,33 @@ class TTSService:
                     "espeakng-loader phonemizer-fork (full deps tree breaks on "
                     "Python 3.13 because misaki[en] pins numpy==1.26.4)."
                 ) from e
+            import torch
             kokoro_cache = str(self._download_root / "kokoro")
             Path(kokoro_cache).mkdir(parents=True, exist_ok=True)
             # Kokoro pulls its weights from HF the first time; cache_dir is
             # honored via the HF_HOME env var. Set if caller didn't already.
             os.environ.setdefault("HF_HOME", kokoro_cache)
+            # Device: env var override, else auto. Kokoro's LSTM kernels have
+            # no ROCm implementation today (silently recompiles MIOpen on AMD),
+            # so on AMD GPU systems force CPU by setting KOKORO_DEVICE=cpu.
+            env_dev = os.environ.get("KOKORO_DEVICE", "").strip().lower()
+            if env_dev in ("cpu", "cuda"):
+                kokoro_device = env_dev
+            else:
+                kokoro_device = "cuda" if torch.cuda.is_available() else "cpu"
+            self._kokoro_device = kokoro_device
             print(
                 f"Loading TTS model '{KOKORO_REPO}' voice={self._kokoro_voice} "
-                f"lang={self._kokoro_lang_code} (Kokoro on CPU)..."
+                f"lang={self._kokoro_lang_code} (Kokoro on {kokoro_device})..."
             )
-            # Force CPU — Kokoro's LSTM kernels have no ROCm implementation
-            # today (would silently spend minutes recompiling MIOpen on AMD).
             self._kokoro_pipeline = KPipeline(
                 lang_code=self._kokoro_lang_code,
-                device="cpu",
+                device=kokoro_device,
             )
             self._loaded = True
             print(
                 f"TTS model loaded: {self.language} ({KOKORO_REPO}:{self._kokoro_voice}) "
-                f"@ {self._sample_rate}Hz [Kokoro]"
+                f"@ {self._sample_rate}Hz [Kokoro, {kokoro_device}]"
             )
             return
 
@@ -378,7 +396,7 @@ class TTSService:
 
         if self._use_mms:
             import torch
-            inputs = self._mms_tokenizer(text, return_tensors="pt")
+            inputs = self._mms_tokenizer(text, return_tensors="pt").to(self._mms_device)
             with torch.no_grad():
                 out = self._mms_model(**inputs).waveform
             # VitsModel returns (batch, samples); we synth one text at a time.
