@@ -694,10 +694,20 @@ def main():
                         if r.extras.get("target_lang") == "ht":
                             ht_translation_path = out_dir / Path(r.extras["output_path"]).name
     elif args.reuse_translate_from:
-        cand_es = list(args.reuse_translate_from.glob("translate_*_es.txt"))
-        cand_ht = list(args.reuse_translate_from.glob("translate_*_ht.txt"))
+        # Prefer the distilled-1.3B outputs (production target) over 3.3B when
+        # both exist in the reuse directory. Sorting puts "distilled-1.3B"
+        # before "3.3B" lexically would actually be wrong (3 < d), so filter
+        # explicitly first.
+        all_es = sorted(args.reuse_translate_from.glob("translate_*_es.txt"))
+        all_ht = sorted(args.reuse_translate_from.glob("translate_*_ht.txt"))
+        cand_es = [p for p in all_es if "distilled" in p.name] or all_es
+        cand_ht = [p for p in all_ht if "distilled" in p.name] or all_ht
         if cand_es: es_translation_path = cand_es[0]
         if cand_ht: ht_translation_path = cand_ht[0]
+        if es_translation_path:
+            print(f"  reusing es translations: {es_translation_path.name}")
+        if ht_translation_path:
+            print(f"  reusing ht translations: {ht_translation_path.name}")
 
     # TTS phase ---------------------------------------------------
     if not args.skip_tts:
