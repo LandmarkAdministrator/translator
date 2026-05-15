@@ -455,19 +455,24 @@ def benchmark_mms_tts(translations_path: Path, out_dir: Path,
 
 # ---------------------------------------------------------- simultaneous load
 
-def benchmark_simultaneous_load(out_dir: Path) -> StageResult:
+def benchmark_simultaneous_load(out_dir: Path,
+                                nllb_model_id: str = "facebook/nllb-200-distilled-1.3B"
+                                ) -> StageResult:
     """Try to load the production stack (Parakeet + NLLB + Kokoro + MMS) all at once.
 
     Reports peak VRAM and whether load succeeded — answers "does the
-    production stack fit on this GPU".
+    production stack fit on this GPU". Defaults to the 1.3B NLLB we
+    actually ship; pass facebook/nllb-200-3.3B to ask whether the bigger
+    quality model would also fit.
     """
-    r = StageResult(component="simultaneous_load", model_id="prod_stack", device="mixed")
+    r = StageResult(component="simultaneous_load", model_id=f"prod_stack_with_{nllb_model_id.split('/')[-1]}",
+                    device="mixed")
     reset_vram_stats()
     handles = []
     try:
         import torch
-        # 1. Parakeet (CPU or GPU via onnx-asr — keep CPU here so we get a
-        # clean VRAM number for the torch-backed models)
+        # 1. Parakeet (CPU via onnx-asr — keep CPU here so VRAM numbers
+        # only reflect the torch-backed models)
         import onnx_asr
         parakeet = onnx_asr.load_model(
             "nemo-parakeet-tdt-0.6b-v3",
@@ -475,22 +480,22 @@ def benchmark_simultaneous_load(out_dir: Path) -> StageResult:
         ).with_timestamps()
         handles.append(parakeet)
 
-        # 2. NLLB-3.3B on GPU
+        # 2. NLLB on GPU (fp16)
         from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-        nllb_tok = AutoTokenizer.from_pretrained("facebook/nllb-200-3.3B", src_lang="eng_Latn")
+        nllb_tok = AutoTokenizer.from_pretrained(nllb_model_id, src_lang="eng_Latn")
         nllb = AutoModelForSeq2SeqLM.from_pretrained(
-            "facebook/nllb-200-3.3B", dtype=torch.float16
+            nllb_model_id, dtype=torch.float16
         ).to("cuda")
         nllb.eval()
         handles.append((nllb_tok, nllb))
 
-        # 3. Kokoro
+        # 3. Kokoro (CPU; Kokoro's LSTM kernels run fine on CPU and
+        # production keeps it there to leave the GPU for NLLB)
         from kokoro import KPipeline
-        kokoro = KPipeline(lang_code="e",
-                           device="cuda" if torch.cuda.is_available() else "cpu")
+        kokoro = KPipeline(lang_code="e", device="cpu")
         handles.append(kokoro)
 
-        # 4. MMS-TTS-hat
+        # 4. MMS-TTS-hat on GPU
         from transformers import VitsModel
         mms_tok = AutoTokenizer.from_pretrained("facebook/mms-tts-hat")
         mms = VitsModel.from_pretrained("facebook/mms-tts-hat").to("cuda")
@@ -501,8 +506,8 @@ def benchmark_simultaneous_load(out_dir: Path) -> StageResult:
         r.peak_rss_mib = peak_rss_mib()
         r.extras["loaded_models"] = [
             "nemo-parakeet-tdt-0.6b-v3 (CPU via onnxruntime)",
-            "facebook/nllb-200-3.3B (cuda, fp16)",
-            "hexgrad/Kokoro-82M (cuda)",
+            f"{nllb_model_id} (cuda, fp16)",
+            "hexgrad/Kokoro-82M (cpu)",
             "facebook/mms-tts-hat (cuda)",
         ]
     except Exception as e:
@@ -612,6 +617,18 @@ def main():
 
     results: List[StageResult] = []
 
+    def save_partial():
+        """Persist results.json after every stage so a later crash doesn't
+        lose what we've already measured."""
+        try:
+            (out_dir / "results.json").write_text(json.dumps({
+                "machine": machine_info,
+                "audio": str(audio_path),
+                "results": [asdict(r) for r in results],
+            }, indent=2))
+        except Exception as e:
+            print(f"  WARN: could not save results.json: {e}", file=sys.stderr)
+
     # ASR phase ---------------------------------------------------
     canonical_transcript_path: Optional[Path] = None
     if not args.skip_asr:
@@ -635,6 +652,9 @@ def main():
                 r = benchmark_parakeet(model_id, audio_path, out_dir, dev)
                 results.append(r)
                 print(f"    -> ok={r.ok}  rtf={r.rtf:.3f}  vram={r.peak_vram_mib:.0f}MiB")
+                if not r.ok:
+                    print(f"    ERROR: {r.error}\n{r.extras.get('traceback', '')}", file=sys.stderr)
+                save_partial()
         # Use v3-CPU transcript as canonical translation input if available
         for r in results:
             if r.component == "asr" and r.ok and "v3" in r.model_id:
@@ -661,6 +681,9 @@ def main():
                 results.append(r)
                 print(f"    -> {r.extras.get('target_lang','?')} ok={r.ok} rtf={r.inference_time_s:.1f}s "
                       f"sps={r.extras.get('sentences_per_sec',0):.2f}")
+                if not r.ok:
+                    print(f"    ERROR: {r.error}\n{r.extras.get('traceback', '')}", file=sys.stderr)
+            save_partial()
             # Pick 1.3B's outputs as canonical for TTS (lighter model, faster)
             if "1.3B" in model_id:
                 for r in stage_results:
@@ -689,19 +712,31 @@ def main():
                 r = benchmark_kokoro(es_translation_path, out_dir, dev)
                 results.append(r)
                 print(f"    -> ok={r.ok}  rtf={r.rtf:.3f}  vram={r.peak_vram_mib:.0f}MiB")
+                if not r.ok:
+                    print(f"    ERROR: {r.error}\n{r.extras.get('traceback', '')}", file=sys.stderr)
+                save_partial()
         if ht_translation_path and ht_translation_path.exists():
             for dev in tts_devices:
                 print(f"  tts (ht/MMS): device={dev}")
                 r = benchmark_mms_tts(ht_translation_path, out_dir, dev)
                 results.append(r)
                 print(f"    -> ok={r.ok}  rtf={r.rtf:.3f}  vram={r.peak_vram_mib:.0f}MiB")
+                if not r.ok:
+                    print(f"    ERROR: {r.error}\n{r.extras.get('traceback', '')}", file=sys.stderr)
+                save_partial()
 
     # Simultaneous-load phase ------------------------------------
+    # Run BOTH variants: the production stack (1.3B) AND the quality-target
+    # stack (3.3B). User wants to know whether each fits on this GPU.
     if not args.skip_simultaneous:
-        print("  simultaneous load: Parakeet + NLLB-3.3B + Kokoro + MMS-TTS-hat")
-        r = benchmark_simultaneous_load(out_dir)
-        results.append(r)
-        print(f"    -> ok={r.ok}  peak_vram={r.peak_vram_mib:.0f}MiB")
+        for nllb in ("facebook/nllb-200-distilled-1.3B", "facebook/nllb-200-3.3B"):
+            print(f"  simultaneous load: Parakeet + {nllb} + Kokoro + MMS-TTS-hat")
+            r = benchmark_simultaneous_load(out_dir, nllb_model_id=nllb)
+            results.append(r)
+            print(f"    -> ok={r.ok}  peak_vram={r.peak_vram_mib:.0f}MiB")
+            if not r.ok:
+                print(f"    ERROR: {r.error}", file=sys.stderr)
+            save_partial()
 
     # Persist results & emit report -------------------------------
     raw = [asdict(r) for r in results]
