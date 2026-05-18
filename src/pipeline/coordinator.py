@@ -279,6 +279,11 @@ class TranslationCoordinator:
         # adding a CLI flag — same pattern as NLLB_MODEL for translation.
         env_parakeet = os.environ.get("PARAKEET_MODEL", "").strip()
         self._parakeet_model = env_parakeet or parakeet_model
+        # PARAKEET_PATH points at a local directory of ONNX files for
+        # community-exported / hand-prepared models (e.g. the 1.1B without
+        # punctuation). When set, PARAKEET_MODEL must be the adapter type
+        # (e.g. "nemo-conformer-tdt") rather than a HF repo id.
+        self._parakeet_path = os.environ.get("PARAKEET_PATH", "").strip() or None
         self._parakeet_buffer = None
         # File-input mode reads audio from a WAV/MP3/etc. instead of the mic,
         # for reproducible offline tests. When set, the audio input thread
@@ -344,10 +349,14 @@ class TranslationCoordinator:
         #             audio callback never stalls.
         print("\nLoading ASR service...")
         if self._parakeet:
-            print(f"  streaming backend: parakeet (onnx-asr) model={self._parakeet_model}")
+            if self._parakeet_path:
+                print(f"  streaming backend: parakeet (onnx-asr) model={self._parakeet_model} path={self._parakeet_path}")
+            else:
+                print(f"  streaming backend: parakeet (onnx-asr) model={self._parakeet_model}")
             self._parakeet_buffer = ParakeetASRBuffer(
                 model_name=self._parakeet_model,
                 cache_dir=f"{self._models_dir}/asr/parakeet",
+                model_path=self._parakeet_path,
             )
             self._parakeet_buffer.load()
             # Tunable via env; defaults tuned for a formal speaker cadence.

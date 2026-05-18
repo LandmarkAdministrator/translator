@@ -68,6 +68,7 @@ class ParakeetASRBuffer:
         cache_dir: Optional[str] = None,
         providers: Optional[List[str]] = None,
         quantization: Optional[str] = None,
+        model_path: Optional[str] = None,
     ):
         self._model_name = model_name
         # onnx_asr.load_model() doesn't accept cache_dir directly — HF downloads
@@ -76,6 +77,12 @@ class ParakeetASRBuffer:
         self._cache_dir = cache_dir
         self._providers = providers
         self._quantization = quantization
+        # Local-path mode: when model_path is set, onnx-asr loads from disk
+        # rather than downloading from HF. model_name then has to be the
+        # *adapter type* (e.g. "nemo-conformer-tdt") not a HF repo id. Useful
+        # for community exports that need a hand-written config.json or
+        # checkpoints that aren't published on HF.
+        self._model_path = model_path
 
         self._model = None  # TimestampedResultsAsrAdapter
         self._buffer: np.ndarray = np.zeros(0, dtype=np.float32)
@@ -123,13 +130,20 @@ class ParakeetASRBuffer:
         kwargs = {"providers": providers}
         if self._quantization:
             kwargs["quantization"] = self._quantization
+        if self._model_path:
+            kwargs["path"] = self._model_path
 
         base = onnx_asr.load_model(self._model_name, **kwargs)
         # with_timestamps() returns an adapter whose recognize() yields
         # TimestampedResult(text, timestamps, tokens, logprobs). We use the
         # timestamps for buffer trimming and commit-boundary reporting.
         self._model = base.with_timestamps()
-        logger.info("Parakeet loaded: model=%s providers=%s", self._model_name, providers)
+        logger.info(
+            "Parakeet loaded: model=%s%s providers=%s",
+            self._model_name,
+            f" path={self._model_path}" if self._model_path else "",
+            providers,
+        )
 
     def feed(
         self,
