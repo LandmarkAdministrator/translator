@@ -47,15 +47,19 @@ _SENT_END = re.compile(r'[.?!]["\')\]]?\s*$')
 
 
 def _clean_join(fragments: List[str]) -> str:
-    """Join fragments with a space and normalize punctuation spacing.
+    """Concatenate Parakeet fragments and normalize whitespace.
 
-    Parakeet commits sometimes contain leading punctuation (e.g. ", Mr.")
-    and sometimes don't; blindly joining with space produces "word ," which
-    we collapse here so the translator sees clean input.
+    Each fragment carries its own SentencePiece-style leading-space marker:
+    new words start with a space, continuations of a previous word don't.
+    We concatenate WITHOUT adding any separator — direct join preserves
+    `" just"` + `"ice"` = `" justice"`. The previous space-join strategy
+    incorrectly produced `"just ice"` for this case, which was the source
+    of the long-standing `"J ustice"`, `"signifying ing"`, `"re volution"`
+    subword artifacts.
     """
     if not fragments:
         return ""
-    joined = " ".join(f.strip() for f in fragments if f and f.strip())
+    joined = "".join(f for f in fragments if f)
     # No space before , . ; : ! ?
     joined = re.sub(r"\s+([,.;:!?])", r"\1", joined)
     # Collapse multi-space
@@ -119,17 +123,19 @@ class SentenceBuffer:
         """
         if text is None:
             return None
-        stripped = text.strip()
-        if not stripped:
-            # Still treat this as a tick in case a silence_timeout should fire.
+        if not text.strip():
+            # Whitespace-only fragment: still tick so silence_timeout can fire.
             return self.tick(now=now)
 
+        # Preserve leading whitespace — it carries word-boundary info from
+        # SentencePiece tokenization. Stripping here would break the
+        # `" just"` + `"ice"` = `" justice"` joining in _clean_join.
         now = now if now is not None else time.monotonic()
 
         if not self._frags:
             self._first_start_wall = start_wall
             self._first_recv_monotonic = now
-        self._frags.append(stripped)
+        self._frags.append(text)
         self._last_recv_monotonic = now
         self._asr_accum += asr_time
 

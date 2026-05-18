@@ -45,10 +45,15 @@ def _tokens_to_text(tokens: Sequence[str]) -> str:
     """Join Parakeet tokens into a readable string.
 
     onnx-asr returns tokens with SentencePiece-style leading spaces already
-    expanded (▁ → space) by the time they land in TimestampedResult.tokens,
-    so plain concatenation plus whitespace cleanup is sufficient.
+    expanded (▁ → space) by the time they land in TimestampedResult.tokens.
+    We *preserve* leading whitespace on the result because downstream
+    consumers (the SentenceBuffer) need it to tell word continuations from
+    new words. For example, when commit N emits `" just"` and commit N+1
+    emits `"ice"`, the SentenceBuffer must concatenate them directly to get
+    `"justice"`. If we stripped here, both fragments would lose their
+    boundary signal and the buffer's space-join would produce `"just ice"`.
     """
-    return "".join(tokens).strip()
+    return "".join(tokens)
 
 
 class ParakeetASRBuffer:
