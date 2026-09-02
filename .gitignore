@@ -77,3 +77,10 @@ docs/_build/
 # System
 .directory
 Thumbs.db
+
+# Local test artifacts (never publish: captured service logs, local copies)
+tests/comparison/results/
+tests/comparison/old_stack/
+tests/comparison/nemo_streaming_infer_reference.py
+tests/comparison/2*/
+tests/comparison/canary_*/

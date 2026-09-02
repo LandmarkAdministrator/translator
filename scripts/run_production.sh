@@ -34,10 +34,13 @@ export HT_TTS="mms"
 export MMS_DEVICE="cuda"
 
 # ----- Sentence buffer (defaults match the comparison report) ----------------
-export SENTENCE_SILENCE_TIMEOUT="2.0"
-export SENTENCE_HARD_TIMEOUT="10.0"
-export SENTENCE_MIN_WORDS="3"
-export SENTENCE_MAX_CHARS="800"
+# Overridable from the environment (the timing sweep and head-to-head runs
+# rely on this; before 2026-09-01 these were hard-coded and silently ignored
+# any override).
+export SENTENCE_SILENCE_TIMEOUT="${SENTENCE_SILENCE_TIMEOUT:-2.0}"
+export SENTENCE_HARD_TIMEOUT="${SENTENCE_HARD_TIMEOUT:-10.0}"
+export SENTENCE_MIN_WORDS="${SENTENCE_MIN_WORDS:-3}"
+export SENTENCE_MAX_CHARS="${SENTENCE_MAX_CHARS:-800}"
 
 # ----- ASR -------------------------------------------------------------------
 # Parakeet 0.6B v3 multilingual TDT — current best streaming-compatible ASR
