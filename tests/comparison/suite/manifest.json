@@ -24,8 +24,15 @@
       "ref": "track_jobs.ref.txt"
     },
     {
-      "name": "libri-mix",
+      "name": "singing",
       "start_sec": 2404.4,
+      "duration_sec": 325.0,
+      "marker": "amen there's something about that name",
+      "ref": "track_singing.ref.txt"
+    },
+    {
+      "name": "libri-mix",
+      "start_sec": 2749.4,
       "duration_sec": 640.7,
       "marker": "if called to a case supposed",
       "ref": "track2_libri.ref.txt"

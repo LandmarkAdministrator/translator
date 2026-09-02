@@ -92,7 +92,9 @@ def main():
     ap.add_argument("--sermon", type=Path, help="sermon excerpt audio (track 2)")
     ap.add_argument("--sermon-ref", type=Path, help="human-corrected transcript")
     ap.add_argument("--singing", type=Path,
-                    help="talk/song/talk segment (stability track, no reference)")
+                    help="talk/song/talk segment (transition + music track)")
+    ap.add_argument("--singing-ref", type=Path,
+                    help="corrected transcript incl. lyrics (# lines = notes)")
     ap.add_argument("--out", required=True, type=Path)
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
@@ -136,12 +138,19 @@ def main():
         parts += [jobs, silence(TRACK_GAP)]
         cursor += len(jobs) / SR + TRACK_GAP
 
-    # Singing / transition track — stability probe, no reference
+    # Singing / transition track — piano intro, announcement, song,
+    # announcement. Scored for WER (announcements + lyrics) AND inspected for
+    # transition behavior / music-induced garbage.
     if a.singing:
         sing = ffmpeg_to_pcm(a.singing)
+        ref, marker = None, None
+        if a.singing_ref:
+            sing_ref = " ".join(read_reference(str(a.singing_ref)).split())
+            (a.out / "track_singing.ref.txt").write_text(sing_ref + "\n")
+            ref, marker = "track_singing.ref.txt", marker_words(sing_ref)
         tracks.append({"name": "singing", "start_sec": round(cursor, 1),
                        "duration_sec": round(len(sing) / SR, 1),
-                       "marker": None, "ref": None})
+                       "marker": marker, "ref": ref})
         parts += [sing, silence(TRACK_GAP)]
         cursor += len(sing) / SR + TRACK_GAP
 
@@ -156,6 +165,16 @@ def main():
     cursor += len(ls_audio) / SR + TRACK_GAP
 
     suite = np.concatenate(parts)
+    # Per-track WAVs for direct (static) ASR evaluation — no markers needed.
+    for t in tracks:
+        start = int(t["start_sec"] * SR)
+        end = start + int(t["duration_sec"] * SR)
+        with wave.open(str(a.out / f"track_{t['name']}.wav"), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(SR)
+            w.writeframes(suite[start:end].tobytes())
+
     with wave.open(str(a.out / "suite_v1.wav"), "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
