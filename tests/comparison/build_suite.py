@@ -87,6 +87,10 @@ def main():
     ap.add_argument("--libri-dir", required=True, type=Path)
     ap.add_argument("--jfk", required=True, type=Path)
     ap.add_argument("--jfk-ref", required=True, type=Path)
+    ap.add_argument("--sermon", type=Path, help="sermon excerpt audio (track 2)")
+    ap.add_argument("--sermon-ref", type=Path, help="human-corrected transcript")
+    ap.add_argument("--singing", type=Path,
+                    help="talk/song/talk segment (stability track, no reference)")
     ap.add_argument("--out", required=True, type=Path)
     a = ap.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
@@ -106,7 +110,28 @@ def main():
     parts += [jfk, silence(TRACK_GAP)]
     cursor += len(jfk) / SR + TRACK_GAP
 
-    # Track 2 — LibriSpeech mix
+    # Track 2 — sermon excerpt (the domain that decides everything)
+    if a.sermon and a.sermon_ref:
+        sermon = ffmpeg_to_pcm(a.sermon)
+        sermon_ref = " ".join(read_reference(str(a.sermon_ref)).split())
+        (a.out / "track_sermon.ref.txt").write_text(sermon_ref + "\n")
+        tracks.append({"name": "sermon", "start_sec": round(cursor, 1),
+                       "duration_sec": round(len(sermon) / SR, 1),
+                       "marker": marker_words(sermon_ref),
+                       "ref": "track_sermon.ref.txt"})
+        parts += [sermon, silence(TRACK_GAP)]
+        cursor += len(sermon) / SR + TRACK_GAP
+
+    # Singing / transition track — stability probe, no reference
+    if a.singing:
+        sing = ffmpeg_to_pcm(a.singing)
+        tracks.append({"name": "singing", "start_sec": round(cursor, 1),
+                       "duration_sec": round(len(sing) / SR, 1),
+                       "marker": None, "ref": None})
+        parts += [sing, silence(TRACK_GAP)]
+        cursor += len(sing) / SR + TRACK_GAP
+
+    # Track — LibriSpeech mix
     ls_audio, ls_ref = libri_track(a.libri_dir)
     (a.out / "track2_libri.ref.txt").write_text(ls_ref + "\n")
     tracks.append({"name": "libri-mix", "start_sec": round(cursor, 1),

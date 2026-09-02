@@ -10,8 +10,15 @@
       "ref": "track1_jfk.ref.txt"
     },
     {
-      "name": "libri-mix",
+      "name": "sermon",
       "start_sec": 860.2,
+      "duration_sec": 600.0,
+      "marker": "thank you brother oar i hope",
+      "ref": "track_sermon.ref.txt"
+    },
+    {
+      "name": "libri-mix",
+      "start_sec": 1480.2,
       "duration_sec": 640.7,
       "marker": "if called to a case supposed",
       "ref": "track2_libri.ref.txt"
