@@ -216,8 +216,19 @@ class LanguagePipeline:
         if translation.is_empty:
             return
 
-        # Synthesize speech
-        speech = self._tts.synthesize(translation.translated_text)
+        # Synthesize speech — adaptive speed: when the playback queue backs
+        # up (continuous preaching, translated speech longer than source),
+        # speak faster so live audio catches back up. Same thresholds the
+        # legacy system used for years.
+        speed = 1.0
+        if queue_depth >= 4:
+            speed = 1.35
+        elif queue_depth >= 2:
+            speed = 1.2
+        speech = self._tts.synthesize(translation.translated_text, speed=speed)
+        if speed != 1.0:
+            logger.info("[{}] queue_depth={} → speaking at {:.2f}x",
+                        self.config.language_code.upper(), queue_depth, speed)
         if speech.is_empty:
             return
 

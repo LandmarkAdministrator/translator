@@ -369,12 +369,16 @@ class TTSService:
         """Get the output sample rate."""
         return self._sample_rate
 
-    def synthesize(self, text: str) -> SpeechResult:
+    def synthesize(self, text: str, speed: Optional[float] = None) -> SpeechResult:
         """
         Synthesize speech from text.
 
         Args:
             text: Text to synthesize
+            speed: Optional per-call speed multiplier (adaptive playback:
+                   the coordinator passes >1.0 when the playback queue backs
+                   up so live audio catches back up to the speaker). Falls
+                   back to the service-level default.
 
         Returns:
             SpeechResult with audio data
@@ -382,6 +386,7 @@ class TTSService:
         if not self._loaded:
             self.load()
 
+        effective_speed = speed if speed and speed > 0 else self.speed
         start_time = time.time()
 
         # Handle empty input
@@ -397,15 +402,25 @@ class TTSService:
         if self._use_mms:
             import torch
             inputs = self._mms_tokenizer(text, return_tensors="pt").to(self._mms_device)
-            with torch.no_grad():
-                out = self._mms_model(**inputs).waveform
+            # VITS exposes speaking_rate as a model attribute; scale duration
+            # without a pitch shift, restore afterwards.
+            prev_rate = getattr(self._mms_model, "speaking_rate", None)
+            if prev_rate is not None and effective_speed != 1.0:
+                self._mms_model.speaking_rate = prev_rate * effective_speed
+            try:
+                with torch.no_grad():
+                    out = self._mms_model(**inputs).waveform
+            finally:
+                if prev_rate is not None:
+                    self._mms_model.speaking_rate = prev_rate
             # VitsModel returns (batch, samples); we synth one text at a time.
             audio = out[0].cpu().numpy().astype(np.float32)
         elif self._use_kokoro:
             # Kokoro yields (graphemes, phonemes, audio) per phrase. We
             # concatenate all yielded audio chunks into one waveform.
             audio_chunks = []
-            for _graphemes, _phonemes, chunk in self._kokoro_pipeline(text, voice=self._kokoro_voice):
+            for _graphemes, _phonemes, chunk in self._kokoro_pipeline(
+                    text, voice=self._kokoro_voice, speed=effective_speed):
                 if chunk is not None:
                     if hasattr(chunk, "cpu"):  # torch tensor
                         chunk = chunk.cpu().numpy()
@@ -420,7 +435,7 @@ class TTSService:
             # length_scale adjusts phoneme duration without changing pitch.
             # length_scale = 1/speed: speed=0.9 → length_scale≈1.11 (10% slower)
             from piper.config import SynthesisConfig
-            syn_config = SynthesisConfig(length_scale=1.0 / self.speed) if self.speed != 1.0 else None
+            syn_config = SynthesisConfig(length_scale=1.0 / effective_speed) if effective_speed != 1.0 else None
 
             audio_chunks = []
             for chunk in self._voice.synthesize(text, syn_config=syn_config):
