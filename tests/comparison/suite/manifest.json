@@ -1,0 +1,20 @@
+{
+  "sample_rate": 16000,
+  "track_gap_sec": 20.0,
+  "tracks": [
+    {
+      "name": "jfk",
+      "start_sec": 0.0,
+      "duration_sec": 840.2,
+      "marker": "vice president johnson mr speaker mr",
+      "ref": "track1_jfk.ref.txt"
+    },
+    {
+      "name": "libri-mix",
+      "start_sec": 860.2,
+      "duration_sec": 640.7,
+      "marker": "if called to a case supposed",
+      "ref": "track2_libri.ref.txt"
+    }
+  ]
+}
