@@ -17,8 +17,15 @@
       "ref": "track_sermon.ref.txt"
     },
     {
-      "name": "libri-mix",
+      "name": "jobs",
       "start_sec": 1480.2,
+      "duration_sec": 904.2,
+      "marker": "i'm honored to be with you",
+      "ref": "track_jobs.ref.txt"
+    },
+    {
+      "name": "libri-mix",
+      "start_sec": 2404.4,
       "duration_sec": 640.7,
       "marker": "if called to a case supposed",
       "ref": "track2_libri.ref.txt"

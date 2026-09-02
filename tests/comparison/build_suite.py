@@ -87,6 +87,8 @@ def main():
     ap.add_argument("--libri-dir", required=True, type=Path)
     ap.add_argument("--jfk", required=True, type=Path)
     ap.add_argument("--jfk-ref", required=True, type=Path)
+    ap.add_argument("--jobs", type=Path, help="Steve Jobs Stanford address audio")
+    ap.add_argument("--jobs-ref", type=Path)
     ap.add_argument("--sermon", type=Path, help="sermon excerpt audio (track 2)")
     ap.add_argument("--sermon-ref", type=Path, help="human-corrected transcript")
     ap.add_argument("--singing", type=Path,
@@ -121,6 +123,18 @@ def main():
                        "ref": "track_sermon.ref.txt"})
         parts += [sermon, silence(TRACK_GAP)]
         cursor += len(sermon) / SR + TRACK_GAP
+
+    # Track — Steve Jobs Stanford address (conversational register)
+    if a.jobs and a.jobs_ref:
+        jobs = ffmpeg_to_pcm(a.jobs)
+        jobs_ref = " ".join(read_reference(str(a.jobs_ref)).split())
+        (a.out / "track_jobs.ref.txt").write_text(jobs_ref + "\n")
+        tracks.append({"name": "jobs", "start_sec": round(cursor, 1),
+                       "duration_sec": round(len(jobs) / SR, 1),
+                       "marker": marker_words(jobs_ref),
+                       "ref": "track_jobs.ref.txt"})
+        parts += [jobs, silence(TRACK_GAP)]
+        cursor += len(jobs) / SR + TRACK_GAP
 
     # Singing / transition track — stability probe, no reference
     if a.singing:
