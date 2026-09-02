@@ -28,6 +28,7 @@ from pipeline.parakeet_asr import ParakeetASRBuffer
 from pipeline.sentence_buffer import SentenceBuffer
 from pipeline.translation import TranslationService, TranslationResult
 from pipeline.tts import TTSService, SpeechResult
+from web.bus import BUS as WEB_BUS
 
 
 @dataclass
@@ -219,6 +220,11 @@ class LanguagePipeline:
         speech = self._tts.synthesize(translation.translated_text)
         if speech.is_empty:
             return
+
+        # Publish to the live web page before room playback so phones aren't
+        # behind the PA. No-ops (beyond a ring append) when the server is off.
+        WEB_BUS.translation(self.config.language_code, translation.translated_text)
+        WEB_BUS.audio(self.config.language_code, speech.audio, speech.sample_rate)
 
         # Record when playback starts (this is the true end-to-end point)
         playback_start = time.time()
@@ -678,6 +684,7 @@ class TranslationCoordinator:
                 "[EN-frag] {} | mode=streaming | asr={:.3f}s",
                 new_text, asr_time,
             )
+            WEB_BUS.commit(new_text)
 
             if self._sentence_buffer is not None:
                 emit = self._sentence_buffer.feed(new_text, seg_start_wall, asr_time)
@@ -702,6 +709,7 @@ class TranslationCoordinator:
             "[EN] {} | mode=streaming/sentence | asr={:.3f}s",
             text, asr_time,
         )
+        WEB_BUS.sentence(text)
         for pipeline in self._pipelines.values():
             pipeline.process(
                 text,
@@ -835,6 +843,7 @@ class TranslationCoordinator:
                 if flush_result:
                     text, start_wall, asr_time = flush_result
                     logger.info("[EN-frag] {} | mode=streaming/flush | asr={:.3f}s", text, asr_time)
+                    WEB_BUS.commit(text)
                     if self._sentence_buffer is not None:
                         emit = self._sentence_buffer.feed(text, start_wall, asr_time)
                         if emit is not None:

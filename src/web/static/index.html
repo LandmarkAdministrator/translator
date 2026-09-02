@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Translation</title>
+<style>
+  :root {
+    --bg: #F5F4F0; --card: #FFFFFF; --ink: #23211C; --muted: #8A8578;
+    --line: #DDD9CF; --accent: #175E54; --accent-soft: #E3EEEC; --pending: #9A9484;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14130F; --card: #1E1C17; --ink: #EAE7DF; --muted: #928C7D;
+            --line: #33302A; --accent: #5FB3A5; --accent-soft: #1C2E2B; --pending: #6E695E; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 17px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; min-height: 100dvh;
+  }
+  header {
+    position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line);
+    padding: 10px 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0 auto 0 0; font-weight: 600; letter-spacing: .02em; }
+  .langs { display: flex; gap: 6px; }
+  .langs button {
+    font: inherit; font-size: 14px; padding: 6px 14px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer;
+  }
+  .langs button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #listen {
+    font: inherit; font-size: 14px; padding: 6px 14px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent);
+  }
+  #listen[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  #listen[hidden] { display: none; }
+  #status { font-size: 12px; color: var(--muted); }
+  main { flex: 1; max-width: 46rem; width: 100%; margin: 0 auto; padding: 16px 14px 40vh; }
+  p.line { margin: 0 0 .7em; }
+  #pending { color: var(--pending); }
+  #pending::after { content: "▍"; opacity: .6; animation: blink 1.1s step-start infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .replay { opacity: .55; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Live Translation</h1>
+  <nav class="langs" id="langs">
+    <button data-lang="en" aria-pressed="true">English</button>
+    <button data-lang="es" aria-pressed="false">Español</button>
+    <button data-lang="ht" aria-pressed="false">Kreyòl</button>
+  </nav>
+  <button id="listen" hidden aria-pressed="false">🔊 Listen</button>
+  <span id="status">connecting…</span>
+</header>
+<main id="pane">
+  <div id="lines"></div>
+  <p class="line" id="pending"></p>
+</main>
+<footer>Landmark Baptist Church · live machine translation</footer>
+<script>
+(function () {
+  "use strict";
+  var lang = "en";
+  var listening = false;
+  var linesEl = document.getElementById("lines");
+  var pendingEl = document.getElementById("pending");
+  var statusEl = document.getElementById("status");
+  var listenBtn = document.getElementById("listen");
+  var pendingWords = [];
+  var texts = { en: [], es: [], ht: [] };   // finished lines per language
+  var MAX_LINES = 300;
+
+  // ---- audio (gapless per-sentence scheduling) -------------------------
+  var ctx = null, nextStart = 0;
+  function ensureCtx() {
+    if (!ctx) { ctx = new (window.AudioContext || window.webkitAudioContext)(); nextStart = 0; }
+    if (ctx.state === "suspended") ctx.resume();
+  }
+  function playWav(buf) {
+    if (!listening || !ctx) return;
+    ctx.decodeAudioData(buf.slice(0), function (audio) {
+      var src = ctx.createBufferSource();
+      src.buffer = audio;
+      src.connect(ctx.destination);
+      nextStart = Math.max(ctx.currentTime + 0.05, nextStart);
+      src.start(nextStart);
+      nextStart += audio.duration;
+    });
+  }
+
+  // ---- rendering --------------------------------------------------------
+  function nearBottom() {
+    return window.innerHeight + window.scrollY >= document.body.scrollHeight - 160;
+  }
+  function render() {
+    var list = texts[lang];
+    var html = "";
+    for (var i = Math.max(0, list.length - MAX_LINES); i < list.length; i++) {
+      html += '<p class="line' + (list[i].replay ? " replay" : "") + '">' + esc(list[i].text) + "</p>";
+    }
+    var stick = nearBottom();
+    linesEl.innerHTML = html;
+    pendingEl.textContent = lang === "en" ? pendingWords.join(" ") : "";
+    pendingEl.style.display = (lang === "en" && pendingWords.length) ? "" : "none";
+    if (stick) window.scrollTo(0, document.body.scrollHeight);
+  }
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function push(l, text, replay) {
+    texts[l].push({ text: text, replay: !!replay });
+    if (texts[l].length > MAX_LINES * 2) texts[l] = texts[l].slice(-MAX_LINES);
+    if (l === lang) render();
+  }
+
+  // ---- events -----------------------------------------------------------
+  function onEvent(ev, binary) {
+    if (binary) {
+      if (ev.kind === lang + ".audio") playWav(binary);
+      return;
+    }
+    if (ev.kind === "en.commit") {
+      var ws = ev.text.trim().split(/\s+/).filter(Boolean);
+      pendingWords = pendingWords.concat(ws);
+      if (lang === "en") render();
+    } else if (ev.kind === "en.sentence") {
+      var n = ev.text.trim().split(/\s+/).filter(Boolean).length;
+      pendingWords = pendingWords.slice(n);
+      push("en", ev.text, ev.replay);
+    } else if (ev.kind === "es.text") {
+      push("es", ev.text, ev.replay);
+    } else if (ev.kind === "ht.text") {
+      push("ht", ev.text, ev.replay);
+    }
+  }
+
+  // ---- websocket with reconnect ----------------------------------------
+  var retry = 1000;
+  function connect() {
+    var ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+    ws.binaryType = "arraybuffer";
+    ws.onopen = function () { statusEl.textContent = "live"; retry = 1000; };
+    ws.onmessage = function (m) {
+      if (typeof m.data === "string") {
+        try { onEvent(JSON.parse(m.data), null); } catch (e) {}
+      } else {
+        var dv = new DataView(m.data);
+        var hlen = dv.getUint32(0, true);
+        var head = JSON.parse(new TextDecoder().decode(new Uint8Array(m.data, 4, hlen)));
+        onEvent(head, m.data.slice(4 + hlen));
+      }
+    };
+    ws.onclose = function () {
+      statusEl.textContent = "reconnecting…";
+      setTimeout(connect, retry);
+      retry = Math.min(retry * 2, 15000);
+    };
+  }
+  connect();
+
+  // ---- controls ---------------------------------------------------------
+  document.getElementById("langs").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-lang]");
+    if (!b) return;
+    lang = b.dataset.lang;
+    this.querySelectorAll("button").forEach(function (x) {
+      x.setAttribute("aria-pressed", String(x === b));
+    });
+    listenBtn.hidden = (lang === "en");
+    render();
+  });
+  listenBtn.addEventListener("click", function () {
+    listening = !listening;
+    this.setAttribute("aria-pressed", String(listening));
+    this.textContent = listening ? "🔊 Listening" : "🔊 Listen";
+    if (listening) ensureCtx();
+  });
+})();
+</script>
+</body>
+</html>

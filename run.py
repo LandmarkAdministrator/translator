@@ -211,6 +211,12 @@ Examples:
         input_realtime=not args.no_realtime,
     )
 
+    # Optional live web page (text + audio per language) — WEB_PORT env.
+    web_port = os.environ.get("WEB_PORT", "").strip()
+    if web_port:
+        from web.live_server import start_in_thread
+        start_in_thread(int(web_port))
+
     coordinator.run()
     return 0
 
