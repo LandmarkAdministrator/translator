@@ -53,19 +53,20 @@ def lines_of(log: Path, kind: str):
 
 
 def latency_events(log: Path, kind: str) -> list[tuple[datetime, float]]:
-    """(playback_time, speech_start -> audio_start seconds) per utterance.
+    """(speech_start_time, speech_start -> audio_start seconds) per utterance.
 
-    Comparable across engines: how long after the speaker began an utterance
-    its translated audio started playing. Old format pairs Recording/Playback
-    lines by chunk number; the new stack logs e2e directly.
+    Keyed by WHEN THE SPEECH HAPPENED, not when its audio played: with a large
+    latency those land in different tracks, and bucketing by playback time
+    charges one track's backlog to the next one.
     """
     out: list[tuple[datetime, float]] = []
     if kind == "new":
         for ln in open(log, errors="replace"):
             m = NEW_EVT_T.match(ln)
             if m:
-                out.append((datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S"),
-                            float(m.group(2))))
+                play = datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
+                e2e = float(m.group(2))
+                out.append((play - timedelta(seconds=e2e), e2e))
         return out
     rec: dict[str, tuple[datetime, float]] = {}
     for ln in open(log, errors="replace"):
@@ -78,7 +79,8 @@ def latency_events(log: Path, kind: str) -> list[tuple[datetime, float]]:
         if m and m.group(1) in rec:
             end_t, dur = rec[m.group(1)]
             play = datetime.strptime(m.group(2), "%Y-%m-%d %H:%M:%S.%f")
-            out.append((play, (play - end_t).total_seconds() + dur))
+            speech_start = end_t - timedelta(seconds=dur)
+            out.append((speech_start, (play - speech_start).total_seconds()))
     return out
 
 
@@ -99,14 +101,27 @@ def marker_hit(marker_words: list[str], line_words: list[str]) -> bool:
                for i in range(len(marker_words) - 3))
 
 
-def overlap_len(a: list[str], b: list[str]) -> int:
-    """Largest k where a's last k words ≈ b's first k words (0 if none)."""
-    for k in range(min(len(a), len(b), MAX_OVERLAP), MIN_OVERLAP - 1, -1):
-        tail, head = a[-k:], b[:k]
-        same = sum(1 for x, y in zip(tail, head) if x == y)
-        if same / k >= MATCH_RATIO:
-            return k
-    return 0
+def find_join(a: list[str], b: list[str], probe: int = 40) -> int | None:
+    """Index i in a where b's content starts, so a[:i] + b reconstructs it.
+
+    b may begin anywhere inside a, not only at a's tail: a run can capture the
+    end of a track and then, after the loop wraps, more of that track's
+    beginning than the first fragment was missing. Matching only tail-to-head
+    then finds nothing and the fragments get concatenated, duplicating text.
+    """
+    probe_words = b[:probe]
+    if len(probe_words) < MIN_OVERLAP:
+        return None
+    best_i, best_score = None, 0.0
+    for i in range(len(a)):
+        seg = a[i:i + len(probe_words)]
+        if len(seg) < MIN_OVERLAP:
+            break
+        same = sum(1 for x, y in zip(seg, probe_words) if x == y)
+        score = same / len(probe_words)
+        if score > best_score:
+            best_score, best_i = score, i
+    return best_i if best_score >= MATCH_RATIO else None
 
 
 def head_similarity(words: list[str], ref: list[str], n: int = 25) -> float:
@@ -125,10 +140,12 @@ def stitch(fragments: list[list[str]]) -> tuple[list[str], list[str]]:
     """Join fragments in order, merging on overlap. Returns (words, notes)."""
     merged, notes = list(fragments[0]), []
     for i, frag in enumerate(fragments[1:], 2):
-        k = overlap_len(merged, frag)
-        if k:
-            merged += frag[k:]
-            notes.append(f"joined fragment {i} on {k}-word overlap")
+        j = find_join(merged, frag)
+        if j is not None:
+            overlap = len(merged) - j
+            merged = merged[:j] + frag
+            notes.append(f"joined fragment {i} at word {j} "
+                         f"({overlap}-word overlap absorbed)")
         else:
             merged += frag
             notes.append(f"fragment {i} appended with NO overlap found")
