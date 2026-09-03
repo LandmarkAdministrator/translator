@@ -61,6 +61,29 @@ class SpeechResult:
         return len(self.audio) == 0
 
 
+def _trim_silence(audio: "np.ndarray", sample_rate: int,
+                  threshold: float = 0.01, keep_ms: int = 40) -> "np.ndarray":
+    """Strip leading/trailing near-silence from synthesized speech.
+
+    TTS engines pad their output: measured on the legacy pipeline as a fixed
+    ~1.65 s per utterance regardless of length (2026-09-03 regression over 390
+    live chunks — audio length correlated 0.78 with word count but only 0.25
+    with source duration). During continuous preaching that padding is the
+    difference between a playback queue that drains and one that grows without
+    bound, so every utterance carries it into the backlog.
+
+    A short pad (keep_ms) is left on each end so words are not clipped.
+    """
+    if audio is None or len(audio) == 0:
+        return audio
+    loud = np.abs(audio) > threshold
+    if not loud.any():
+        return audio[:0]
+    first, last = int(np.argmax(loud)), int(len(loud) - np.argmax(loud[::-1]))
+    pad = int(sample_rate * keep_ms / 1000)
+    return audio[max(0, first - pad):min(len(audio), last + pad)]
+
+
 class TTSService:
     """
     Text-to-speech service using Piper.
@@ -446,6 +469,8 @@ class TTSService:
                 audio = np.concatenate(audio_chunks).astype(np.float32)
             else:
                 audio = np.array([], dtype=np.float32)
+
+        audio = _trim_silence(audio, self._sample_rate)
 
         processing_time = time.time() - start_time
 
