@@ -29,6 +29,13 @@ from wer_from_log import normalize, wer  # noqa: E402
 OLD_RECOG = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ - Chunk \d+ Recognized: (.*)$")
 NEW_SENT = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\.\d+ \| \S+\s*\| [^|]+ \| \[EN\] (.*?) \| mode=streaming/sentence")
 
+TS = r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)"
+OLD_REC_T = re.compile(r"^\S+ \S+ - Recording chunk (\d+) started: " + TS
+                       + r", ended: " + TS + r" \(~([\d.]+)s\)")
+OLD_PLAY_T = re.compile(r"^\S+ \S+ - Chunk (\d+) Playback started: " + TS)
+NEW_EVT_T = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\.\d+ \| \S+\s*\| [^|]+ \| "
+                       r"\[ES\] .*? \| e2e=([\d.]+)s")
+
 MIN_OVERLAP = 8       # words that must line up to accept a stitch
 MAX_OVERLAP = 600     # cap the search window
 MATCH_RATIO = 0.65    # fraction of positions that must agree (ASR differs)
@@ -43,6 +50,45 @@ def lines_of(log: Path, kind: str):
             if text.startswith("[silence"):
                 continue
             yield datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S"), text
+
+
+def latency_events(log: Path, kind: str) -> list[tuple[datetime, float]]:
+    """(playback_time, speech_start -> audio_start seconds) per utterance.
+
+    Comparable across engines: how long after the speaker began an utterance
+    its translated audio started playing. Old format pairs Recording/Playback
+    lines by chunk number; the new stack logs e2e directly.
+    """
+    out: list[tuple[datetime, float]] = []
+    if kind == "new":
+        for ln in open(log, errors="replace"):
+            m = NEW_EVT_T.match(ln)
+            if m:
+                out.append((datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S"),
+                            float(m.group(2))))
+        return out
+    rec: dict[str, tuple[datetime, float]] = {}
+    for ln in open(log, errors="replace"):
+        m = OLD_REC_T.match(ln)
+        if m:
+            rec[m.group(1)] = (datetime.strptime(m.group(3), "%Y-%m-%d %H:%M:%S.%f"),
+                               float(m.group(4)))
+            continue
+        m = OLD_PLAY_T.match(ln)
+        if m and m.group(1) in rec:
+            end_t, dur = rec[m.group(1)]
+            play = datetime.strptime(m.group(2), "%Y-%m-%d %H:%M:%S.%f")
+            out.append((play, (play - end_t).total_seconds() + dur))
+    return out
+
+
+def pct(values: list[float], q: float) -> float:
+    if not values:
+        return float("nan")
+    v = sorted(values)
+    k = (len(v) - 1) * q
+    lo, hi = int(k), min(int(k) + 1, len(v) - 1)
+    return v[lo] + (v[hi] - v[lo]) * (k - lo)
 
 
 def marker_hit(marker_words: list[str], line_words: list[str]) -> bool:
@@ -105,6 +151,7 @@ def main():
     entries = list(lines_of(a.log, a.type))
     if not entries:
         sys.exit("no recognized text in this log")
+    lat_events = latency_events(a.log, a.type)
 
     anchors, last = [], None
     for t, text in entries:
@@ -136,6 +183,7 @@ def main():
             if track.get("ref") else None
 
         frags = []  # (window_start, words, n_lines)
+        lats: list[float] = []
         for anchor in used:
             w0 = anchor + timedelta(seconds=track["start_sec"] - a.slack)
             w1 = anchor + timedelta(seconds=track["start_sec"]
@@ -145,6 +193,7 @@ def main():
                 if w0 <= t <= w1:
                     words += normalize(text)
                     n_lines += 1
+            lats += [v for t, v in lat_events if w0 <= t <= w1]
             if words:
                 frags.append((w0, words, n_lines))
 
@@ -168,13 +217,17 @@ def main():
             n_lines = sum(f[2] for f in frags)
             notes.insert(0, f"{len(frags)} fragments (wrap-around reconstructed)")
 
+        lat = ""
+        if lats:
+            lat = (f" | latency speech-start→audio: med {pct(lats, .5):4.1f}s "
+                   f"p95 {pct(lats, .95):5.1f}s (n={len(lats)})")
         if ref_words:
             w, s, d, i = wer(ref_words, words)
             print(f"  {name:<10} WER {w * 100:5.2f}%  (sub {s} del {d} ins {i}; "
-                  f"{n_lines} lines, {len(words)}/{len(ref_words)} words)")
+                  f"{n_lines} lines, {len(words)}/{len(ref_words)} words){lat}")
         else:
             print(f"  {name:<10} {n_lines} lines, {len(words)} words "
-                  f"(stability probe — inspect text manually)")
+                  f"(stability probe — inspect text manually){lat}")
         for note in notes:
             print(f"             · {note}")
         if a.verbose and ref_words:
