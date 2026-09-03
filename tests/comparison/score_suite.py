@@ -146,9 +146,23 @@ def stitch(fragments: list[list[str]]) -> tuple[list[str], list[str]]:
             merged = merged[:j] + frag
             notes.append(f"joined fragment {i} at word {j} "
                          f"({overlap}-word overlap absorbed)")
-        else:
-            merged += frag
-            notes.append(f"fragment {i} appended with NO overlap found")
+            continue
+        # The other fragment may instead start earlier — e.g. a wrap fragment
+        # that begins a few words into the track, so the first fragment's
+        # opening cannot be found inside it. Try the reverse direction.
+        j = find_join(frag, merged)
+        if j is not None:
+            overlap = len(frag) - j
+            merged = frag[:j] + merged
+            notes.append(f"fragment {i} prepended at word {j} "
+                         f"({overlap}-word overlap absorbed)")
+            continue
+        # No alignment either way: concatenating would fabricate duplicates,
+        # so keep the longer fragment and say so.
+        if len(frag) > len(merged):
+            merged = list(frag)
+        notes.append(f"fragment {i} did NOT align — kept the longer fragment "
+                     f"only (no concatenation)")
     return merged, notes
 
 
