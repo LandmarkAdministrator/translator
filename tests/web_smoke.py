@@ -137,6 +137,33 @@ def main():
     else:
         raise AssertionError("no pong")
 
+
+    # 8) PWA assets — manifest, worker, icons, and directory-escape refusal
+    for path, needle, ctype in [
+        ("/manifest.webmanifest", b'"display": "standalone"', b"application/manifest+json"),
+        ("/sw.js", b"translation-shell", b"text/javascript"),
+        ("/icons/icon-192.png", b"\x89PNG", b"image/png"),
+    ]:
+        c = socket.create_connection(("127.0.0.1", PORT), timeout=5)
+        c.sendall(f"GET {path} HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+        buf = b""
+        while len(buf) < 200000:
+            chunk = c.recv(65536)
+            if not chunk:
+                break
+            buf += chunk
+        c.close()
+        assert b"200 OK" in buf.split(b"\r\n")[0], f"{path} not served"
+        assert ctype in buf, f"{path} wrong content-type"
+        assert needle in buf, f"{path} wrong body"
+    print("PWA assets: OK")
+
+    c = socket.create_connection(("127.0.0.1", PORT), timeout=5)
+    c.sendall(b"GET /../../etc/passwd HTTP/1.1\r\nHost: x\r\n\r\n")
+    buf = c.recv(65536); c.close()
+    assert b"404" in buf.split(b"\r\n")[0], "directory escape was not refused"
+    print("path traversal refused: OK")
+
     s.sendall(masked_frame(wsproto.OP_CLOSE, struct.pack(">H", 1000)))
     s.close()
     print("ALL WEB SMOKE TESTS PASSED")

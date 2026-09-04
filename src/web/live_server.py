@@ -113,16 +113,31 @@ class LiveServer:
         await self._serve_http(writer, path)
 
     async def _serve_http(self, writer: asyncio.StreamWriter, path: str):
-        if path.split("?")[0] in ("/", "/index.html"):
+        clean = path.split("?")[0]
+        # Static assets for the installable app. Paths are resolved and checked
+        # to stay inside STATIC_DIR so a crafted request cannot escape it.
+        types = {".html": "text/html; charset=utf-8", ".js": "text/javascript",
+                 ".png": "image/png", ".webmanifest": "application/manifest+json",
+                 ".json": "application/json", ".css": "text/css"}
+        extra = ""
+        if clean in ("/", "/index.html"):
             body = (STATIC_DIR / "index.html").read_bytes()
-            ctype = "text/html; charset=utf-8"
-            status = "200 OK"
+            ctype, status = types[".html"], "200 OK"
         else:
-            body = b"not found"
-            ctype = "text/plain"
-            status = "404 Not Found"
+            candidate = (STATIC_DIR / clean.lstrip("/")).resolve()
+            if (candidate.is_file() and STATIC_DIR.resolve() in candidate.parents
+                    and candidate.suffix in types):
+                body = candidate.read_bytes()
+                ctype, status = types[candidate.suffix], "200 OK"
+                if candidate.suffix == ".png":
+                    extra = "Cache-Control: public, max-age=604800\r\n"
+                elif candidate.name == "sw.js":
+                    # Never cache the worker itself, or updates cannot land.
+                    extra = "Cache-Control: no-cache\r\n"
+            else:
+                body, ctype, status = b"not found", "text/plain", "404 Not Found"
         writer.write(
-            f"HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\n"
+            f"HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\n{extra}"
             f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode() + body
         )
         try:
