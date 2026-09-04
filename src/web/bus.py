@@ -55,6 +55,21 @@ class LiveBus:
         with self._lock:
             return list(self._ring)
 
+    def clear_ring(self) -> None:
+        with self._lock:
+            self._ring.clear()
+
+    def inject(self, event: dict, binary: Optional[bytes] = None) -> None:
+        """Re-publish an event that arrived from another process.
+
+        Sequence numbers are reassigned locally so they stay monotonic for our
+        own clients across pipeline restarts; the original timestamp survives,
+        since it marks when the words were actually spoken.
+        """
+        kind = event.get("kind", "unknown")
+        rest = {k: v for k, v in event.items() if k not in ("seq", "kind")}
+        self._publish(kind, rest, binary)
+
     def _publish(self, kind: str, data: dict, binary: Optional[bytes] = None) -> None:
         with self._lock:
             self._seq += 1

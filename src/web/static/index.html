@@ -52,6 +52,14 @@
   #pending::after { content: "▍"; opacity: .6; animation: blink 1.1s step-start infinite; }
   @keyframes blink { 50% { opacity: 0; } }
   .replay { opacity: .55; }
+  #standby {
+    max-width: 30rem; margin: 12vh auto 0; text-align: center; color: var(--muted);
+  }
+  #standby[hidden] { display: none; }
+  #standby .mark { font-size: 30px; line-height: 1; margin-bottom: 12px; opacity: .5; }
+  #standby h2 { font-size: 17px; margin: 0 0 6px; color: var(--fg); font-weight: 600; }
+  #standby p { margin: 0; font-size: 14px; }
+  #standby .times { margin-top: 14px; font-size: 13px; line-height: 1.7; }
   footer {
     text-align: center; color: var(--muted); font-size: 12px;
     padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
@@ -70,6 +78,14 @@
   <span id="status">connecting…</span>
 </header>
 <main id="pane">
+  <div id="standby" hidden>
+    <div class="mark">◦</div>
+    <h2>No service in progress</h2>
+    <p>Live translation will appear here automatically when the service begins.</p>
+    <div class="times">
+      Sunday 9:15 am &amp; 6:15 pm<br>Wednesday 5:45 pm
+    </div>
+  </div>
   <div id="lines"></div>
   <p class="line" id="pending"></p>
 </main>
@@ -136,6 +152,10 @@
       if (ev.kind === lang + ".audio") playWav(binary);
       return;
     }
+    if (ev.kind === "status") {
+      setLive(ev.live);
+      return;
+    }
     if (ev.kind === "en.commit") {
       var ws = ev.text.trim().split(/\s+/).filter(Boolean);
       pendingWords = pendingWords.concat(ws);
@@ -148,6 +168,29 @@
       push("es", ev.text, ev.replay);
     } else if (ev.kind === "ht.text") {
       push("ht", ev.text, ev.replay);
+    }
+  }
+
+  // ---- live / standby ---------------------------------------------------
+  // The server stays up between services, so "connected" and "a service is
+  // running" are different things; the page has to say which one it means.
+  var standbyEl = document.getElementById("standby");
+  var live = null;
+  function setLive(on) {
+    on = !!on;
+    if (on === live) return;
+    live = on;
+    standbyEl.hidden = on;
+    linesEl.hidden = !on;
+    pendingEl.hidden = !on;
+    // English is text-only, so the button stays hidden there either way.
+    listenBtn.hidden = !on || lang === "en";
+    statusEl.textContent = on ? "live" : "standby";
+    if (!on) {
+      // Drop the finished service's transcript so the next one starts clean.
+      texts = { en: [], es: [], ht: [] };
+      pendingWords = [];
+      render();
     }
   }
 
@@ -191,7 +234,7 @@
     this.querySelectorAll("button").forEach(function (x) {
       x.setAttribute("aria-pressed", String(x === b));
     });
-    listenBtn.hidden = (lang === "en");
+    listenBtn.hidden = (lang === "en") || live === false;
     render();
   });
   listenBtn.addEventListener("click", function () {

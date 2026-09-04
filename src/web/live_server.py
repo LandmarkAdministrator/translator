@@ -1,6 +1,10 @@
 """Live-translation web server: static page + WebSocket event stream.
 
-Runs an asyncio loop on a daemon thread inside the translator process.
+Normally runs as its own always-on process (scripts/run_web.py) so the page
+and the admin panel stay up outside service windows; the translation pipeline
+connects to it as a publisher over a Unix socket (see relay.py). It can also
+be started on a thread inside the pipeline for tests and one-off runs.
+
 Serves:
   GET /      -> src/web/static/index.html
   GET /ws    -> WebSocket: JSON text frames for text events; binary frames
@@ -18,47 +22,11 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
-try:
-    from loguru import logger
-except ImportError:  # keep the web module stdlib-only (tests, other venvs)
-    import logging as _logging
-
-    class _BraceLogger:
-        """Loguru-compatible subset: brace formatting, all the usual levels.
-
-        Must cover every level the module uses — a missing one raises
-        AttributeError deep inside a request handler, where it looks like a
-        network fault rather than a typo.
-        """
-
-        def __init__(self):
-            self._log = _logging.getLogger("web")
-
-        def _fmt(self, msg, args):
-            try:
-                return msg.format(*args) if args else msg
-            except Exception:
-                return f"{msg} {args}"
-
-        def debug(self, msg, *args):
-            self._log.debug(self._fmt(msg, args))
-
-        def info(self, msg, *args):
-            self._log.info(self._fmt(msg, args))
-
-        def warning(self, msg, *args):
-            self._log.warning(self._fmt(msg, args))
-
-        def error(self, msg, *args):
-            self._log.error(self._fmt(msg, args))
-
-        def exception(self, msg, *args):
-            self._log.exception(self._fmt(msg, args))
-
-    logger = _BraceLogger()
+from web._log import logger
 
 from web import admin as adminui
 from web import auth
@@ -102,7 +70,9 @@ class LiveServer:
 
     def __init__(self, port: Optional[int] = None, host: str = "127.0.0.1",
                  tls_port: Optional[int] = None, certfile: Optional[str] = None,
-                 keyfile: Optional[str] = None, tls_host: str = "0.0.0.0"):
+                 keyfile: Optional[str] = None, tls_host: str = "0.0.0.0",
+                 relay_path: Optional[str] = None):
+        self.relay_path = relay_path
         self.port = port
         self.host = host
         self.tls_port = tls_port
@@ -112,6 +82,19 @@ class LiveServer:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._clients: set[_Client] = set()
         self._sessions = auth.Sessions()
+        # False until the translation pipeline connects. The page shows a
+        # standby notice rather than an empty transcript that looks broken.
+        self._live = False
+
+    def set_live(self, live: bool) -> None:
+        """Called by the relay when the pipeline connects or drops."""
+        if live == self._live:
+            return
+        self._live = live
+        self._sink({"kind": "status", "live": live, "t": round(time.time(), 3)}, None)
+
+    def _status_event(self) -> dict:
+        return {"kind": "status", "live": self._live, "t": round(time.time(), 3)}
 
     def _ssl_context(self):
         import ssl
@@ -304,6 +287,9 @@ class LiveServer:
         client = _Client(writer)
         self._clients.add(client)
         logger.info("[web] client connected ({} total)", len(self._clients))
+        # Tell the new client whether a service is running before any replay,
+        # so it never renders a stale transcript as though it were live.
+        client.offer(wsproto.text_frame(json.dumps(self._status_event())), False)
         # catch-up: recent text events so the transcript isn't empty
         for event in BUS.ring():
             client.offer(wsproto.text_frame(json.dumps({**event, "replay": True})), False)
@@ -348,6 +334,9 @@ class LiveServer:
     # -- lifecycle ---------------------------------------------------------
     async def _main(self):
         servers = []
+        if self.relay_path:
+            from .relay import RelayListener
+            await RelayListener(self, self.relay_path).start()
         if self.port:
             servers.append(await asyncio.start_server(self._handle, self.host, self.port))
             logger.info("[web] http://{}:{}/ (plain — keep this on loopback)",

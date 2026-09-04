@@ -211,10 +211,11 @@ Examples:
         input_realtime=not args.no_realtime,
     )
 
-    # Optional live web page (text + audio per language).
-    #   WEB_PORT        plain HTTP, bound to WEB_HOST (loopback by default)
-    #   WEB_TLS_PORT    HTTPS + WSS on all interfaces, for the reverse proxy
-    #   WEB_TLS_CERT / WEB_TLS_KEY   internal-CA certificate and key
+    # Live web page. The server is normally a separate always-on process
+    # (scripts/run_web.py) that outlives us, so we just publish to it; it owns
+    # the ports and keeps serving a standby page when we are not running.
+    # Set WEB_PORT/WEB_TLS_PORT here only to host the server in-process, which
+    # ties the page's lifetime to this run.
     web_port = os.environ.get("WEB_PORT", "").strip()
     tls_port = os.environ.get("WEB_TLS_PORT", "").strip()
     if web_port or tls_port:
@@ -226,6 +227,9 @@ Examples:
             certfile=os.environ.get("WEB_TLS_CERT") or None,
             keyfile=os.environ.get("WEB_TLS_KEY") or None,
         )
+    elif os.environ.get("WEB_RELAY", "1") != "0":
+        from web.relay import RelayPublisher
+        RelayPublisher(os.environ.get("WEB_RELAY_SOCKET") or None).start()
 
     coordinator.run()
     return 0

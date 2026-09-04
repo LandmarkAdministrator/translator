@@ -1,0 +1,23 @@
+[Unit]
+# Always-on web server for the live page and the admin panel. Deliberately
+# independent of translate.service: it must stay reachable outside service
+# windows so congregants see a standby notice rather than a refused connection,
+# and so the admin panel can start a stopped translation service.
+Description=Live Translation web server (page + admin, always on)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/translator
+Environment=WEB_PORT=8080
+Environment=WEB_HOST=127.0.0.1
+Environment=WEB_TLS_PORT=8443
+Environment=WEB_TLS_CERT=/etc/translate-tls/tls.crt
+Environment=WEB_TLS_KEY=/etc/translate-tls/tls.key
+Environment=WEB_RELAY_SOCKET=%t/translate-web.sock
+ExecStart=%h/translator/venv/bin/python %h/translator/scripts/run_web.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
