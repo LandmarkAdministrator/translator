@@ -27,20 +27,41 @@ except ImportError:  # keep the web module stdlib-only (tests, other venvs)
     import logging as _logging
 
     class _BraceLogger:
+        """Loguru-compatible subset: brace formatting, all the usual levels.
+
+        Must cover every level the module uses — a missing one raises
+        AttributeError deep inside a request handler, where it looks like a
+        network fault rather than a typo.
+        """
+
         def __init__(self):
             self._log = _logging.getLogger("web")
 
         def _fmt(self, msg, args):
-            return msg.format(*args) if args else msg
+            try:
+                return msg.format(*args) if args else msg
+            except Exception:
+                return f"{msg} {args}"
+
+        def debug(self, msg, *args):
+            self._log.debug(self._fmt(msg, args))
 
         def info(self, msg, *args):
             self._log.info(self._fmt(msg, args))
 
+        def warning(self, msg, *args):
+            self._log.warning(self._fmt(msg, args))
+
         def error(self, msg, *args):
             self._log.error(self._fmt(msg, args))
 
+        def exception(self, msg, *args):
+            self._log.exception(self._fmt(msg, args))
+
     logger = _BraceLogger()
 
+from web import admin as adminui
+from web import auth
 from web import ws as wsproto
 from web.bus import BUS, frame_binary
 
@@ -73,6 +94,7 @@ class LiveServer:
         self.host = host
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._clients: set[_Client] = set()
+        self._sessions = auth.Sessions()
 
     # -- bus sink (called from pipeline threads) --------------------------
     def _sink(self, event: dict, binary: Optional[bytes]) -> None:
@@ -110,7 +132,111 @@ class LiveServer:
         if path.split("?")[0] == "/ws" and "sec-websocket-key" in headers:
             await self._serve_ws(reader, writer, headers["sec-websocket-key"])
             return
+        if path.split("?")[0].startswith("/admin"):
+            method = line.split(" ")[0].upper()
+            body = b""
+            length = int(headers.get("content-length", "0") or 0)
+            if length and length < 64_000:
+                body = await reader.readexactly(length)
+            peer = writer.get_extra_info("peername")
+            try:
+                await self._serve_admin(writer, method, path.split("?")[0],
+                                        headers, body,
+                                        peer[0] if peer else "?")
+            except Exception as e:
+                # Never drop the connection silently: a bare disconnect is
+                # indistinguishable from a network fault when debugging.
+                import traceback
+                logger.error("[admin] handler failed: {}\n{}", e, traceback.format_exc())
+                try:
+                    self._reply(writer, "500 Internal Server Error",
+                                "text/plain", b"admin error")
+                    writer.close()
+                except Exception:
+                    pass
+            return
         await self._serve_http(writer, path)
+
+    # -- admin ------------------------------------------------------------
+    def _reply(self, writer, status: str, ctype: str, body: bytes,
+               extra: str = "") -> None:
+        writer.write(
+            f"HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\n{extra}"
+            f"X-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n"
+            f"Cache-Control: no-store\r\nContent-Length: {len(body)}\r\n"
+            f"Connection: close\r\n\r\n".encode() + body)
+
+    async def _serve_admin(self, writer, method: str, path: str,
+                           headers: dict, body: bytes, peer: str):
+        token = auth.parse_cookies(headers.get("cookie", "")).get(adminui.COOKIE)
+        addr = auth.client_address(headers, peer)
+        # Secure cookies only make sense over TLS; behind the proxy the
+        # original scheme arrives in X-Forwarded-Proto.
+        https = headers.get("x-forwarded-proto", "").lower() == "https"
+        secure = "; Secure" if https else ""
+        authed = self._sessions.valid(token)
+
+        if path == "/admin/logout":
+            self._sessions.destroy(token)
+            self._reply(writer, "303 See Other", "text/plain", b"",
+                        f"Location: /admin\r\nSet-Cookie: {adminui.COOKIE}=; Path=/admin; "
+                        f"Max-Age=0; HttpOnly; SameSite=Strict{secure}\r\n")
+        elif path == "/admin/login" and method == "POST":
+            wait = self._sessions.locked_for(addr)
+            if wait > 0:
+                logger.info("[admin] login refused, {} locked out for {:.0f}s", addr, wait)
+                self._reply(writer, "429 Too Many Requests", "text/html; charset=utf-8",
+                            adminui.login_page(f"Too many attempts. Try again in {int(wait)}s."))
+            else:
+                from urllib.parse import parse_qs, unquote_plus
+                form = parse_qs(body.decode("utf-8", "replace"))
+                user = (form.get("username") or [""])[0]
+                pw = (form.get("password") or [""])[0]
+                if auth.verify_password(unquote_plus(user), unquote_plus(pw)):
+                    self._sessions.clear_failures(addr)
+                    tok = self._sessions.create()
+                    logger.info("[admin] signed in from {}", addr)
+                    self._reply(writer, "303 See Other", "text/plain", b"",
+                                f"Location: /admin\r\nSet-Cookie: {adminui.COOKIE}={tok}; "
+                                f"Path=/admin; HttpOnly; SameSite=Strict{secure}\r\n")
+                else:
+                    self._sessions.record_failure(addr)
+                    logger.warning("[admin] failed sign-in from {}", addr)
+                    self._reply(writer, "401 Unauthorized", "text/html; charset=utf-8",
+                                adminui.login_page("Incorrect username or password."))
+        elif not authed:
+            if path.startswith("/admin/api"):
+                self._reply(writer, "401 Unauthorized", "application/json",
+                            b'{"error":"not signed in"}')
+            elif auth.load_credentials() is None:
+                self._reply(writer, "503 Service Unavailable", "text/html; charset=utf-8",
+                            adminui.login_page(
+                                "No admin credentials are set. Run "
+                                "scripts/set_admin_password.py on the server."))
+            else:
+                self._reply(writer, "200 OK", "text/html; charset=utf-8",
+                            adminui.login_page())
+        elif path == "/admin/api/status":
+            self._reply(writer, "200 OK", "application/json",
+                        json.dumps(adminui.gather_status()).encode())
+        elif path == "/admin/api/action" and method == "POST":
+            try:
+                action = json.loads(body or b"{}").get("action", "")
+            except Exception:
+                action = ""
+            ok, message = adminui.do_action(action)
+            logger.info("[admin] action {!r} from {} -> {}", action, addr, message)
+            self._reply(writer, "200 OK" if ok else "400 Bad Request",
+                        "application/json",
+                        json.dumps({"ok": ok, "message": message}).encode())
+        else:
+            self._reply(writer, "200 OK", "text/html; charset=utf-8",
+                        adminui.ADMIN_PAGE.encode())
+        try:
+            await writer.drain()
+        except Exception:
+            pass
+        writer.close()
 
     async def _serve_http(self, writer: asyncio.StreamWriter, path: str):
         clean = path.split("?")[0]
