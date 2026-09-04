@@ -89,12 +89,38 @@ class _Client:
 
 
 class LiveServer:
-    def __init__(self, port: int, host: str = "0.0.0.0"):
+    """Serves the page, the WebSocket stream, and /admin.
+
+    Can listen twice: a plain-HTTP socket (kept on loopback for local probes)
+    and a TLS socket bound to all interfaces for the reverse proxy to reach
+    across the VLAN. Nothing plaintext is exposed off-box that way.
+
+    The certificate is read at startup only. Renewal restarts the service —
+    the internal CA issues short-lived certs, so the renew hook must restart
+    us or we would keep serving an expired one.
+    """
+
+    def __init__(self, port: Optional[int] = None, host: str = "127.0.0.1",
+                 tls_port: Optional[int] = None, certfile: Optional[str] = None,
+                 keyfile: Optional[str] = None, tls_host: str = "0.0.0.0"):
         self.port = port
         self.host = host
+        self.tls_port = tls_port
+        self.certfile = certfile
+        self.keyfile = keyfile
+        self.tls_host = tls_host
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._clients: set[_Client] = set()
         self._sessions = auth.Sessions()
+
+    def _ssl_context(self):
+        import ssl
+        ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        ctx.load_cert_chain(self.certfile, self.keyfile)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        # No client certs: the gateway verifies us, not the other way round.
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
 
     # -- bus sink (called from pipeline threads) --------------------------
     def _sink(self, event: dict, binary: Optional[bytes]) -> None:
@@ -321,10 +347,26 @@ class LiveServer:
 
     # -- lifecycle ---------------------------------------------------------
     async def _main(self):
-        server = await asyncio.start_server(self._handle, self.host, self.port)
-        logger.info("[web] live page on http://{}:{}/  (ws on /ws)", self.host, self.port)
-        async with server:
-            await server.serve_forever()
+        servers = []
+        if self.port:
+            servers.append(await asyncio.start_server(self._handle, self.host, self.port))
+            logger.info("[web] http://{}:{}/ (plain — keep this on loopback)",
+                        self.host, self.port)
+        if self.tls_port and self.certfile and self.keyfile:
+            try:
+                servers.append(await asyncio.start_server(
+                    self._handle, self.tls_host, self.tls_port, ssl=self._ssl_context()))
+                logger.info("[web] https://{}:{}/ (TLS, ws on /ws)",
+                            self.tls_host, self.tls_port)
+            except Exception as e:
+                # A missing or unreadable cert must not take the page down
+                # entirely; log loudly and keep whatever else is listening.
+                logger.error("[web] TLS listener failed ({}: {}) — cert {} key {}",
+                             type(e).__name__, e, self.certfile, self.keyfile)
+        if not servers:
+            logger.error("[web] no listener configured; web page disabled")
+            return
+        await asyncio.gather(*(s.serve_forever() for s in servers))
 
     def run_forever(self):
         self._loop = asyncio.new_event_loop()
@@ -338,8 +380,11 @@ class LiveServer:
             BUS.remove_sink(self._sink)
 
 
-def start_in_thread(port: int) -> threading.Thread:
-    server = LiveServer(port)
+def start_in_thread(port: Optional[int] = None, host: str = "127.0.0.1",
+                    tls_port: Optional[int] = None, certfile: Optional[str] = None,
+                    keyfile: Optional[str] = None) -> threading.Thread:
+    server = LiveServer(port=port, host=host, tls_port=tls_port,
+                        certfile=certfile, keyfile=keyfile)
     thread = threading.Thread(target=server.run_forever, name="web-live", daemon=True)
     thread.start()
     return thread

@@ -211,11 +211,21 @@ Examples:
         input_realtime=not args.no_realtime,
     )
 
-    # Optional live web page (text + audio per language) — WEB_PORT env.
+    # Optional live web page (text + audio per language).
+    #   WEB_PORT        plain HTTP, bound to WEB_HOST (loopback by default)
+    #   WEB_TLS_PORT    HTTPS + WSS on all interfaces, for the reverse proxy
+    #   WEB_TLS_CERT / WEB_TLS_KEY   internal-CA certificate and key
     web_port = os.environ.get("WEB_PORT", "").strip()
-    if web_port:
+    tls_port = os.environ.get("WEB_TLS_PORT", "").strip()
+    if web_port or tls_port:
         from web.live_server import start_in_thread
-        start_in_thread(int(web_port))
+        start_in_thread(
+            port=int(web_port) if web_port else None,
+            host=os.environ.get("WEB_HOST", "127.0.0.1"),
+            tls_port=int(tls_port) if tls_port else None,
+            certfile=os.environ.get("WEB_TLS_CERT") or None,
+            keyfile=os.environ.get("WEB_TLS_KEY") or None,
+        )
 
     coordinator.run()
     return 0
