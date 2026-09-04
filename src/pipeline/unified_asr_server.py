@@ -66,8 +66,16 @@ def main() -> None:
         want_bias = bool(os.environ.get("UNIFIED_BIAS_FILE", "").strip())
         dec_cfg = OmegaConf.structured(RNNTDecodingConfig(fused_batch_size=-1))
         dec_cfg.strategy = "greedy_batch"
-        if want_bias:
-            with open_dict(dec_cfg):
+        # The batched decoder captures CUDA graphs by default, which dlopens
+        # libcuda.so.1 — absent on ROCm and CPU, where it aborts startup with
+        # an error that names CUDA rather than the option that asked for it.
+        # Enable it only where it can actually work.
+        use_graphs = torch.cuda.is_available() and torch.version.cuda is not None
+        if os.environ.get("UNIFIED_CUDA_GRAPHS", "").strip():
+            use_graphs = os.environ["UNIFIED_CUDA_GRAPHS"].strip() != "0"
+        with open_dict(dec_cfg):
+            dec_cfg.greedy.use_cuda_graph_decoder = bool(use_graphs)
+            if want_bias:
                 dec_cfg.greedy.enable_per_stream_biasing = True
         model.change_decoding_strategy(dec_cfg)
         model = model.to("cuda").eval()

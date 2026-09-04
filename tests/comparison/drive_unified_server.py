@@ -7,6 +7,7 @@ the server subprocess uses ~/nemo-venv/bin/python.
 
 Usage: drive_unified_server.py WAV OUT_TXT [chunk_secs=1.5]
 """
+import os
 import json
 import struct
 import subprocess
@@ -21,7 +22,12 @@ wav_path, out_txt = sys.argv[1], sys.argv[2]
 push_secs = float(sys.argv[3]) if len(sys.argv) > 3 else 1.5
 
 server = str(Path(__file__).parent.parent.parent / "src" / "pipeline" / "unified_asr_server.py")
-python = str(Path.home() / "nemo-venv" / "bin" / "python")
+# NeMo lives in a separate venv on the production host but in the project venv
+# on other machines, so let the environment say which interpreter to use.
+python = os.environ.get("UNIFIED_PYTHON") or str(Path.home() / "nemo-venv" / "bin" / "python")
+if not Path(python).exists():
+    sys.exit(f"NeMo interpreter not found: {python}\n"
+             f"Set UNIFIED_PYTHON to a python that has nemo_toolkit installed.")
 
 audio, sr = sf.read(wav_path, dtype="float32")
 assert sr == 16000, sr
