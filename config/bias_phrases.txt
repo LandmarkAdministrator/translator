@@ -1,0 +1,136 @@
+# Context-biasing phrases for the unified streaming ASR.
+# One phrase per line; '#' comments and blank lines ignored.
+#
+# These are boosted inside the RNNT decoder — the equivalent of the
+# initial_prompt trick used with Whisper in the legacy program, but applied
+# during decoding rather than as a hint at the start.
+#
+# Keep this list tight. Every phrase raises the chance of hearing that phrase,
+# so boosting a common word invites false insertions. Prefer proper nouns,
+# archaic forms, and domain terms that a general model is likely to mishear.
+
+# --- Books of the Bible ---
+Genesis
+Exodus
+Leviticus
+Numbers
+Deuteronomy
+Joshua
+Judges
+Ruth
+Samuel
+Kings
+Chronicles
+Ezra
+Nehemiah
+Esther
+Job
+Psalms
+Psalm
+Proverbs
+Ecclesiastes
+Song of Solomon
+Isaiah
+Jeremiah
+Lamentations
+Ezekiel
+Daniel
+Hosea
+Joel
+Amos
+Obadiah
+Jonah
+Micah
+Nahum
+Habakkuk
+Zephaniah
+Haggai
+Zechariah
+Malachi
+Matthew
+Mark
+Luke
+John
+Acts
+Romans
+Corinthians
+Galatians
+Ephesians
+Philippians
+Colossians
+Thessalonians
+Timothy
+Titus
+Philemon
+Hebrews
+James
+Peter
+Jude
+Revelation
+
+# --- KJV forms a modern-English model tends to normalise away ---
+thee
+thou
+thy
+thine
+ye
+hath
+doth
+saith
+unto
+wherefore
+beseech
+brethren
+
+# --- Recurring scriptural names ---
+Jesus Christ
+Lord Jesus
+Nebuchadnezzar
+Belshazzar
+Darius
+Medes
+Persians
+Babylon
+Jerusalem
+Israel
+Judah
+Pharaoh
+Moses
+Abraham
+Isaac
+Jacob
+Elijah
+Elisha
+Isaiah
+Zion
+Calvary
+Gethsemane
+Bethlehem
+Nazareth
+
+# --- Theological vocabulary ---
+justification
+sanctification
+propitiation
+atonement
+redemption
+righteousness
+repentance
+tribulation
+salvation
+begotten
+resurrection
+
+# --- Church names (preachers and staff heard from the platform) ---
+Brother Oar
+Pastor Barry Parsons
+Al Stone
+Brian McBride
+Chad Stanley
+Daniel Correa
+Danny Chamberland
+James Verceles
+Jesse Maxwell
+Jim Morgan
+John Tiberi
+Landmark Baptist

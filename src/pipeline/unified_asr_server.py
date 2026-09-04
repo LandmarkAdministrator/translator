@@ -59,13 +59,60 @@ def main() -> None:
         if model.cfg.get("validation_ds", None) is None:
             with open_dict(model.cfg):
                 model.cfg.validation_ds = OmegaConf.create({})
-        dec_cfg = RNNTDecodingConfig(fused_batch_size=-1)
+        # Context biasing has to be switched on when the decoding strategy is
+        # built: the biasing model is allocated by the label-looping computer
+        # only when cfg.greedy.enable_per_stream_biasing is true (it defaults
+        # to false, in which case phrases are silently ignored).
+        want_bias = bool(os.environ.get("UNIFIED_BIAS_FILE", "").strip())
+        dec_cfg = OmegaConf.structured(RNNTDecodingConfig(fused_batch_size=-1))
         dec_cfg.strategy = "greedy_batch"
+        if want_bias:
+            with open_dict(dec_cfg):
+                dec_cfg.greedy.enable_per_stream_biasing = True
         model.change_decoding_strategy(dec_cfg)
         model = model.to("cuda").eval()
         model.preprocessor.featurizer.dither = 0.0
         model.preprocessor.featurizer.pad_to = 0
         computer = model.decoding.decoding.decoding_computer
+
+        # Context biasing: boost church vocabulary inside the decoder — the
+        # counterpart of the legacy program's Whisper initial_prompt, but
+        # applied during decoding. Optional and fail-soft: a broken phrase
+        # list must never stop a service starting.
+        bias_ids = None
+        bias_file = os.environ.get("UNIFIED_BIAS_FILE", "").strip()
+        if bias_file and os.path.exists(bias_file):
+            try:
+                phrases = []
+                for raw in open(bias_file, encoding="utf-8"):
+                    line = raw.strip()
+                    if line and not line.startswith("#"):
+                        phrases.append(line)
+                if phrases and getattr(computer, "biasing_multi_model", None) is not None:
+                    from nemo.collections.asr.parts.context_biasing.biasing_multi_model import (
+                        BiasingRequestItemConfig,
+                    )
+                    from nemo.collections.asr.parts.context_biasing.boosting_graph_batched import (
+                        BoostingTreeModelConfig,
+                    )
+                    req = BiasingRequestItemConfig(
+                        boosting_model_cfg=BoostingTreeModelConfig(key_phrases_list=phrases),
+                        boosting_model_alpha=float(os.environ.get("UNIFIED_BIAS_ALPHA", "1.0")),
+                    )
+                    req.add_to_multi_model(tokenizer=model.tokenizer,
+                                           biasing_multi_model=computer.biasing_multi_model)
+                    if req.multi_model_id is not None:
+                        bias_ids = torch.full([1], req.multi_model_id,
+                                              dtype=torch.long, device="cuda")
+                        print(f"[unified server] context biasing on: {len(phrases)} phrases, "
+                              f"alpha={req.boosting_model_alpha}", flush=True)
+                elif phrases:
+                    print("[unified server] biasing requested but this decoder exposes no "
+                          "biasing_multi_model — continuing without it", flush=True)
+            except Exception as e:
+                print(f"[unified server] context biasing unavailable ({type(e).__name__}: {e}) "
+                      "— continuing without it", flush=True)
+                bias_ids = None
 
         feature_stride_sec = model.cfg.preprocessor["window_stride"]
         feats_per_sec = 1.0 / feature_stride_sec
@@ -150,7 +197,8 @@ def main() -> None:
                     dlen = enc_len - ecb.left
                 else:
                     dlen = ecb.chunk
-                hyps, state = computer(x=enc, out_len=dlen, prev_batched_state=state)
+                hyps, state = computer(x=enc, out_len=dlen, prev_batched_state=state,
+                                       multi_biasing_ids=bias_ids)
                 if cur_hyps is None:
                     cur_hyps = hyps
                 else:

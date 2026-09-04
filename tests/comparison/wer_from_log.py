@@ -33,15 +33,38 @@ OLD_RECOG = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+ - Chunk \d+ 
 # buffer trim when ASR falls behind, which would inflate insertions.
 DEFAULT_NEW = r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\.\d+ \| \S+\s*\| [^|]+ \| \[EN\] (.*?) \| mode=streaming/sentence"
 
-_SMALL = {
-    "0": "zero", "1": "one", "2": "two", "3": "three", "4": "four", "5": "five",
-    "6": "six", "7": "seven", "8": "eight", "9": "nine", "10": "ten",
-    "11": "eleven", "12": "twelve", "13": "thirteen", "14": "fourteen",
-    "15": "fifteen", "16": "sixteen", "17": "seventeen", "18": "eighteen",
-    "19": "nineteen", "20": "twenty", "30": "thirty", "40": "forty",
-    "50": "fifty", "60": "sixty", "70": "seventy", "80": "eighty", "90": "ninety",
-    "100": "hundred", "1000": "thousand",
-}
+_UNITS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+          "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+          "sixteen", "seventeen", "eighteen", "nineteen"]
+_TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
+         "eighty", "ninety"]
+
+
+def _spell(n: int) -> str:
+    """Spell an integer the way a preacher says it ("one hundred and twenty").
+
+    ASR engines apply inverse text normalisation and emit digits, while a
+    human reference writes words. Without this, a perfectly correct "120"
+    scored as four errors against "one hundred and twenty" — measured on the
+    sermon track 2026-09-04, roughly 6 of 45 apparent errors were this.
+    """
+    if n < 0:
+        return "minus " + _spell(-n)
+    if n < 20:
+        return _UNITS[n]
+    if n < 100:
+        rest = n % 10
+        return _TENS[n // 10] + (" " + _UNITS[rest] if rest else "")
+    for scale, name in ((1_000_000_000, "billion"), (1_000_000, "million"),
+                        (1000, "thousand"), (100, "hundred")):
+        if n >= scale:
+            rest = n % scale
+            out = _spell(n // scale) + " " + name
+            if rest:
+                # "and" before a sub-hundred remainder, as it is spoken
+                out += (" and " if rest < 100 else " ") + _spell(rest)
+            return out
+    return str(n)
 
 
 def read_reference(path: str) -> str:
@@ -68,7 +91,10 @@ def normalize(text: str) -> list[str]:
         w = w.strip("'")
         if not w:
             continue
-        words.append(_SMALL.get(w, w))
+        if w.isdigit() and len(w) <= 12:
+            words.extend(_spell(int(w)).split())
+        else:
+            words.append(w)
     return words
 
 
