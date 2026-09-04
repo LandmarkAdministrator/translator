@@ -86,23 +86,30 @@ class LiveBus:
                 pass
 
     # -- pipeline-facing helpers ------------------------------------------
-    def commit(self, text: str) -> None:
+    # Every helper takes t0: the wall-clock moment the first audio sample of
+    # this speech arrived from the capture device. Carrying it to the client
+    # is what makes end-to-end latency measurable at the point of delivery
+    # rather than inferred from the server side.
+    def commit(self, text: str, t0: float = 0.0) -> None:
         """Streaming ASR committed new English words (never revised)."""
-        self._publish("en.commit", {"text": text})
+        self._publish("en.commit", {"text": text, "t0": t0})
 
-    def sentence(self, text: str) -> None:
+    def sentence(self, text: str, t0: float = 0.0) -> None:
         """A full English sentence was handed to translation."""
-        self._publish("en.sentence", {"text": text})
+        self._publish("en.sentence", {"text": text, "t0": t0})
 
-    def translation(self, lang: str, text: str) -> None:
-        self._publish(f"{lang}.text", {"text": text})
+    def translation(self, lang: str, text: str, t0: float = 0.0) -> None:
+        self._publish(f"{lang}.text", {"text": text, "t0": t0})
 
-    def audio(self, lang: str, samples, sample_rate: int) -> None:
+    def audio(self, lang: str, samples, sample_rate: int, t0: float = 0.0) -> None:
         try:
             payload = wav_bytes(samples, sample_rate)
         except Exception:
             return
-        self._publish(f"{lang}.audio", {"bytes": len(payload)}, binary=payload)
+        seconds = len(samples) / float(sample_rate or 1)
+        self._publish(f"{lang}.audio",
+                      {"bytes": len(payload), "t0": t0, "secs": round(seconds, 3)},
+                      binary=payload)
 
 
 def frame_binary(event: dict, payload: bytes) -> bytes:

@@ -46,6 +46,12 @@
   #listen[aria-pressed="true"] { background: var(--accent); color: #fff; }
   #listen[hidden] { display: none; }
   #status { font-size: 12px; color: var(--muted); }
+  #phones {
+    margin: 0; padding: 8px 14px; font-size: 13px; text-align: center;
+    color: var(--accent); background: var(--accent-soft);
+    border-bottom: 1px solid var(--line);
+  }
+  #phones[hidden] { display: none; }
   main { flex: 1; max-width: 46rem; width: 100%; margin: 0 auto; padding: 16px 14px 40vh; }
   p.line { margin: 0 0 .7em; }
   #pending { color: var(--pending); }
@@ -77,6 +83,7 @@
   <button id="listen" hidden aria-pressed="false">🔊 Listen</button>
   <span id="status">connecting…</span>
 </header>
+<p id="phones" hidden></p>
 <main id="pane">
   <div id="standby" hidden>
     <div class="mark">◦</div>
@@ -171,6 +178,27 @@
     }
   }
 
+  // ---- per-language wording ---------------------------------------------
+  // Someone who needs the Spanish or Creole feed cannot necessarily read the
+  // English label on the button they have to press, so the control speaks the
+  // language it delivers. The headphone note matters in a full auditorium:
+  // audio out of a phone speaker carries to everyone nearby.
+  var STRINGS = {
+    en: { listen: "🔊 Listen",    listening: "🔊 Listening",  phones: "" },
+    es: { listen: "🔊 Escuchar",  listening: "🔊 Escuchando",
+          phones: "Usa audífonos para no molestar a los demás." },
+    ht: { listen: "🔊 Koute",     listening: "🔊 Ap koute",
+          phones: "Tanpri sèvi ak ekoutè pou ou pa deranje lòt moun." }
+  };
+  var phonesEl = document.getElementById("phones");
+  function applyLang() {
+    var s = STRINGS[lang] || STRINGS.en;
+    listenBtn.textContent = listening ? s.listening : s.listen;
+    listenBtn.hidden = (lang === "en") || live === false;
+    phonesEl.textContent = s.phones;
+    phonesEl.hidden = !s.phones || live === false;
+  }
+
   // ---- live / standby ---------------------------------------------------
   // The server stays up between services, so "connected" and "a service is
   // running" are different things; the page has to say which one it means.
@@ -184,7 +212,7 @@
     linesEl.hidden = !on;
     pendingEl.hidden = !on;
     // English is text-only, so the button stays hidden there either way.
-    listenBtn.hidden = !on || lang === "en";
+    applyLang();
     statusEl.textContent = on ? "live" : "standby";
     if (!on) {
       // Drop the finished service's transcript so the next one starts clean.
@@ -234,13 +262,13 @@
     this.querySelectorAll("button").forEach(function (x) {
       x.setAttribute("aria-pressed", String(x === b));
     });
-    listenBtn.hidden = (lang === "en") || live === false;
+    applyLang();
     render();
   });
   listenBtn.addEventListener("click", function () {
     listening = !listening;
     this.setAttribute("aria-pressed", String(listening));
-    this.textContent = listening ? "🔊 Listening" : "🔊 Listen";
+    applyLang();
     if (listening) ensureCtx();
   });
 })();

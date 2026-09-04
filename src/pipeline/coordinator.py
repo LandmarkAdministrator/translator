@@ -234,8 +234,10 @@ class LanguagePipeline:
 
         # Publish to the live web page before room playback so phones aren't
         # behind the PA. No-ops (beyond a ring append) when the server is off.
-        WEB_BUS.translation(self.config.language_code, translation.translated_text)
-        WEB_BUS.audio(self.config.language_code, speech.audio, speech.sample_rate)
+        WEB_BUS.translation(self.config.language_code, translation.translated_text,
+                            t0=chunk_start_time)
+        WEB_BUS.audio(self.config.language_code, speech.audio, speech.sample_rate,
+                      t0=chunk_start_time)
 
         # Record when playback starts (this is the true end-to-end point)
         playback_start = time.time()
@@ -695,7 +697,7 @@ class TranslationCoordinator:
                 "[EN-frag] {} | mode=streaming | asr={:.3f}s",
                 new_text, asr_time,
             )
-            WEB_BUS.commit(new_text)
+            WEB_BUS.commit(new_text, t0=seg_start_wall)
 
             if self._sentence_buffer is not None:
                 emit = self._sentence_buffer.feed(new_text, seg_start_wall, asr_time)
@@ -720,7 +722,7 @@ class TranslationCoordinator:
             "[EN] {} | mode=streaming/sentence | asr={:.3f}s",
             text, asr_time,
         )
-        WEB_BUS.sentence(text)
+        WEB_BUS.sentence(text, t0=start_wall)
         for pipeline in self._pipelines.values():
             pipeline.process(
                 text,
@@ -854,7 +856,7 @@ class TranslationCoordinator:
                 if flush_result:
                     text, start_wall, asr_time = flush_result
                     logger.info("[EN-frag] {} | mode=streaming/flush | asr={:.3f}s", text, asr_time)
-                    WEB_BUS.commit(text)
+                    WEB_BUS.commit(text, t0=start_wall)
                     if self._sentence_buffer is not None:
                         emit = self._sentence_buffer.feed(text, start_wall, asr_time)
                         if emit is not None:
