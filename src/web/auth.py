@@ -128,11 +128,26 @@ def parse_cookies(header: str) -> dict:
     return out
 
 
-def client_address(headers: dict, peer: str) -> str:
-    """Real client address, trusting the proxy's X-Forwarded-For when present.
+# Reverse proxies whose X-Forwarded-For we believe. Anything else reaching the
+# TLS port directly is treated as the client itself.
+TRUSTED_PROXIES = {
+    a.strip() for a in os.environ.get(
+        "TRANSLATOR_TRUSTED_PROXIES", "10.1.170.204,127.0.0.1,::1").split(",")
+    if a.strip()
+}
 
-    Only meaningful because this service is reached through our own reverse
-    proxy; the value is used for rate limiting, never for authorisation.
+
+def client_address(headers: dict, peer: str) -> str:
+    """Real client address, used for rate limiting and never for authorisation.
+
+    X-Forwarded-For is attacker-controlled: our proxy *appends* to whatever the
+    client sent, so the header reads "<spoofed>, <real>" and the first entry is
+    worthless. Taking it would let anyone reset their own lockout counter by
+    varying a header. So the header is honoured only when the connection came
+    from a proxy we trust, and then only its last entry — the one that proxy
+    appended itself.
     """
-    fwd = headers.get("x-forwarded-for", "")
-    return fwd.split(",")[0].strip() if fwd else peer
+    if peer not in TRUSTED_PROXIES:
+        return peer
+    parts = [p.strip() for p in headers.get("x-forwarded-for", "").split(",") if p.strip()]
+    return parts[-1] if parts else peer

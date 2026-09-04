@@ -179,10 +179,15 @@ class LiveServer:
                            headers: dict, body: bytes, peer: str):
         token = auth.parse_cookies(headers.get("cookie", "")).get(adminui.COOKIE)
         addr = auth.client_address(headers, peer)
-        # Secure cookies only make sense over TLS; behind the proxy the
-        # original scheme arrives in X-Forwarded-Proto.
-        https = headers.get("x-forwarded-proto", "").lower() == "https"
-        secure = "; Secure" if https else ""
+        # Mark the session cookie Secure whenever the request really came over
+        # TLS. The socket is the authority — a direct HTTPS connection to our
+        # own port carries no X-Forwarded-Proto, and relying on that header
+        # alone silently dropped the flag. The header is a fallback for
+        # proxied requests, and only from a proxy we trust.
+        on_tls = writer.get_extra_info("ssl_object") is not None
+        proxied_https = (peer in auth.TRUSTED_PROXIES
+                         and headers.get("x-forwarded-proto", "").lower() == "https")
+        secure = "; Secure" if (on_tls or proxied_https) else ""
         authed = self._sessions.valid(token)
 
         if path == "/admin/logout":
