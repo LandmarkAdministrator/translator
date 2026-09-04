@@ -87,11 +87,9 @@
 <main id="pane">
   <div id="standby" hidden>
     <div class="mark">◦</div>
-    <h2>No service in progress</h2>
-    <p>Live translation will appear here automatically when the service begins.</p>
-    <div class="times">
-      Sunday 9:15 am &amp; 6:15 pm<br>Wednesday 5:45 pm
-    </div>
+    <h2 id="sb-title">No service in progress</h2>
+    <p id="sb-body">Live translation will appear here automatically when the service begins.</p>
+    <div class="times" id="sb-times"></div>
   </div>
   <div id="lines"></div>
   <p class="line" id="pending"></p>
@@ -183,12 +181,25 @@
   // English label on the button they have to press, so the control speaks the
   // language it delivers. The headphone note matters in a full auditorium:
   // audio out of a phone speaker carries to everyone nearby.
+  // Service times are the congregation's, not the translator's — someone
+  // reading this is deciding when to come back, not when software starts.
+  var TIMES = {
+    en: "Sunday 10:00 am &amp; 7:00 pm<br>Wednesday 7:30 pm",
+    es: "Domingo 10:00 am y 7:00 pm<br>Miércoles 7:30 pm",
+    ht: "Dimanch 10:00 am ak 7:00 pm<br>Mèkredi 7:30 pm"
+  };
   var STRINGS = {
-    en: { listen: "🔊 Listen",    listening: "🔊 Listening",  phones: "" },
+    en: { listen: "🔊 Listen",    listening: "🔊 Listening",  phones: "",
+          sbTitle: "No service in progress",
+          sbBody: "Live translation will appear here automatically when the service begins." },
     es: { listen: "🔊 Escuchar",  listening: "🔊 Escuchando",
-          phones: "Usa audífonos para no molestar a los demás." },
+          phones: "Usa audífonos para no molestar a los demás.",
+          sbTitle: "No hay servicio en este momento",
+          sbBody: "La traducción en vivo aparecerá aquí automáticamente cuando comience el servicio." },
     ht: { listen: "🔊 Koute",     listening: "🔊 Ap koute",
-          phones: "Tanpri sèvi ak ekoutè pou ou pa deranje lòt moun." }
+          phones: "Tanpri sèvi ak ekoutè pou ou pa deranje lòt moun.",
+          sbTitle: "Pa gen sèvis kounye a",
+          sbBody: "Tradiksyon an dirèk ap parèt isit la otomatikman lè sèvis la kòmanse." }
   };
   var phonesEl = document.getElementById("phones");
   function applyLang() {
@@ -197,7 +208,11 @@
     listenBtn.hidden = (lang === "en") || live === false;
     phonesEl.textContent = s.phones;
     phonesEl.hidden = !s.phones || live === false;
+    document.getElementById("sb-title").textContent = s.sbTitle;
+    document.getElementById("sb-body").textContent = s.sbBody;
+    document.getElementById("sb-times").innerHTML = TIMES[lang] || TIMES.en;
   }
+  applyLang();   // render the standby copy before the first status arrives
 
   // ---- live / standby ---------------------------------------------------
   // The server stays up between services, so "connected" and "a service is

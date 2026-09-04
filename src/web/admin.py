@@ -70,22 +70,47 @@ def gather_status() -> dict:
     return st
 
 
+OVERRIDE_FLAG = Path.home() / "translate-manual.flag"
+
+
 def do_action(name: str) -> tuple[bool, str]:
-    """State-changing operations. Deliberately few and explicit."""
+    """State-changing operations. Deliberately few and explicit.
+
+    Start and stop both pause the schedule first. Without that the window
+    checker — which runs every five minutes — would simply undo them: it stops
+    translation outside a service window and starts it inside one, so a bare
+    'start' on a Friday would die within five minutes and look like a crash.
+    The cost is that the schedule stays paused until it is explicitly resumed,
+    which is why the page warns about it.
+    """
+    if name == "start":
+        try:
+            OVERRIDE_FLAG.touch()
+        except Exception as e:
+            return False, f"Could not pause the schedule: {e}"
+        subprocess.Popen(["systemctl", "--user", "start", "translate.service"])
+        return True, ("Starting translation (takes ~40s to load models). The "
+                      "automatic schedule is PAUSED until you resume it.")
     if name == "restart":
         subprocess.Popen(["systemctl", "--user", "restart", "translate.service"])
         return True, "Restarting translation — this page will reconnect shortly."
     if name == "stop":
+        try:
+            OVERRIDE_FLAG.touch()
+        except Exception as e:
+            return False, f"Could not pause the schedule: {e}"
         subprocess.Popen(["systemctl", "--user", "stop", "translate.service"])
-        return True, "Translation stopped. The scheduler will restart it in its next window."
+        return True, ("Translation stopped. The automatic schedule is PAUSED "
+                      "until you resume it.")
     if name == "clear_override":
         try:
-            (Path.home() / "translate-manual.flag").unlink()
-            return True, "Manual override cleared — the schedule is live again."
+            OVERRIDE_FLAG.unlink()
+            return True, ("Schedule resumed — services will start and stop "
+                          "automatically again.")
         except FileNotFoundError:
-            return True, "No override was set."
+            return True, "The schedule was already running automatically."
         except Exception as e:
-            return False, f"Could not clear override: {e}"
+            return False, f"Could not resume the schedule: {e}"
     return False, "Unknown action."
 
 
@@ -141,15 +166,24 @@ button{font:inherit;font-size:14px;padding:9px 14px;border-radius:7px;border:1px
 background:var(--bg);color:var(--ink);cursor:pointer}
 button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
 #msg{font-size:14px;color:var(--good);min-height:1.2em}
+.hint{font-size:12.5px;color:var(--muted);margin:10px 0 0}
+#warn{background:var(--warn);color:#fff;border-radius:9px;padding:12px 14px;
+margin-bottom:14px;font-size:14px;font-weight:600}
+#warn[hidden]{display:none}
 </style></head><body><main>
 <header><h1>Translation Admin</h1><span id="msg"></span>
 <a class="out" href="/admin/logout">Sign out</a></header>
 <div class="grid" id="tiles"></div>
+<div id="warn" hidden></div>
 <section><h2>Controls</h2><div class="actions">
-<button class="primary" data-act="restart">Restart translation</button>
+<button class="primary" data-act="start">Start translation</button>
 <button data-act="stop">Stop translation</button>
-<button data-act="clear_override">Clear manual override</button>
-</div></section>
+<button data-act="restart">Restart</button>
+<button data-act="clear_override">Resume automatic schedule</button>
+</div>
+<p class="hint">Start and Stop pause the automatic schedule so the window
+checker cannot undo them. Use <b>Resume automatic schedule</b> when you are
+done, or services will not start on their own.</p></section>
 <section><h2>Recent activity</h2><pre id="recent">…</pre></section>
 <section><h2>Scheduler</h2><pre id="sched">…</pre></section>
 </main><script>
@@ -167,8 +201,13 @@ function refresh(){
     if(d.log_age_sec!==undefined)t+=tile('Log age',esc(d.log_age_sec)+'s',d.log_age_sec>180?'warn':'good');
     if(d.sentences_seen!==undefined)t+=tile('Sentences',esc(d.sentences_seen));
     if(d.errors_seen!==undefined)t+=tile('Errors',esc(d.errors_seen),d.errors_seen>0?'bad':'good');
-    t+=tile('Override',d.manual_override?'SET':'clear',d.manual_override?'warn':'good');
+    t+=tile('Schedule',d.manual_override?'PAUSED':'automatic',d.manual_override?'warn':'good');
     document.getElementById('tiles').innerHTML=t;
+    var w=document.getElementById('warn');
+    w.hidden=!d.manual_override;
+    if(d.manual_override)w.textContent=
+      '⚠ The automatic schedule is PAUSED. Translation will NOT start by '+
+      'itself for the next service. Press "Resume automatic schedule" when done.';
     document.getElementById('recent').textContent=(d.recent||['(nothing yet)']).join('\\n');
     document.getElementById('sched').textContent=(d.scheduler||['(no entries)']).join('\\n');
   }).catch(function(){});
