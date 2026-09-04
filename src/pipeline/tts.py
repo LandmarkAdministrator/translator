@@ -24,6 +24,7 @@ MMS_MODELS = {
     "ht": "facebook/mms-tts-hat",
     "es": "facebook/mms-tts-spa",
     "fr": "facebook/mms-tts-fra",
+    "ru": "facebook/mms-tts-rus",
 }
 
 

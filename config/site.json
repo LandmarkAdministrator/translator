@@ -1,0 +1,64 @@
+{
+  "_comment": "Per-site configuration. Everything here is congregation-specific; the code reads it so a new deployment edits this file instead of the source. Served to the web page at /config.json.",
+
+  "church_name": "Landmark Baptist Church",
+  "app_name": "Live Translation",
+
+  "service_times": {
+    "en": "Sunday 10:00 am & 7:00 pm<br>Wednesday 7:30 pm",
+    "es": "Domingo 10:00 am y 7:00 pm<br>Miércoles 7:30 pm",
+    "ht": "Dimanch 10:00 am ak 7:00 pm<br>Mèkredi 7:30 pm",
+    "ru": "Воскресенье 10:00 и 19:00<br>Среда 19:30"
+  },
+
+  "languages": [
+    {
+      "code": "en",
+      "label": "English",
+      "audio": false,
+      "strings": {
+        "listen": "🔊 Listen",
+        "listening": "🔊 Listening",
+        "phones": "",
+        "sbTitle": "No service in progress",
+        "sbBody": "Live translation will appear here automatically when the service begins."
+      }
+    },
+    {
+      "code": "es",
+      "label": "Español",
+      "audio": true,
+      "strings": {
+        "listen": "🔊 Escuchar",
+        "listening": "🔊 Escuchando",
+        "phones": "Usa audífonos para no molestar a los demás.",
+        "sbTitle": "No hay servicio en este momento",
+        "sbBody": "La traducción en vivo aparecerá aquí automáticamente cuando comience el servicio."
+      }
+    },
+    {
+      "code": "ht",
+      "label": "Kreyòl",
+      "audio": true,
+      "strings": {
+        "listen": "🔊 Koute",
+        "listening": "🔊 Ap koute",
+        "phones": "Tanpri sèvi ak ekoutè pou ou pa deranje lòt moun.",
+        "sbTitle": "Pa gen sèvis kounye a",
+        "sbBody": "Tradiksyon an dirèk ap parèt isit la otomatikman lè sèvis la kòmanse."
+      }
+    },
+    {
+      "code": "ru",
+      "label": "Русский",
+      "audio": true,
+      "strings": {
+        "listen": "🔊 Слушать",
+        "listening": "🔊 Идёт воспроизведение",
+        "phones": "Пожалуйста, используйте наушники, чтобы не беспокоить окружающих.",
+        "sbTitle": "Сейчас служения нет",
+        "sbBody": "Перевод в реальном времени появится здесь автоматически, когда начнётся служение."
+      }
+    }
+  ]
+}

@@ -75,11 +75,7 @@
 <body>
 <header>
   <h1>Live Translation</h1>
-  <nav class="langs" id="langs">
-    <button data-lang="en" aria-pressed="true">English</button>
-    <button data-lang="es" aria-pressed="false">Español</button>
-    <button data-lang="ht" aria-pressed="false">Kreyòl</button>
-  </nav>
+  <nav class="langs" id="langs"></nav>
   <button id="listen" hidden aria-pressed="false">🔊 Listen</button>
   <span id="status">connecting…</span>
 </header>
@@ -94,7 +90,7 @@
   <div id="lines"></div>
   <p class="line" id="pending"></p>
 </main>
-<footer>Landmark Baptist Church · live machine translation</footer>
+<footer id="foot">live machine translation</footer>
 <script>
 (function () {
   "use strict";
@@ -105,7 +101,7 @@
   var statusEl = document.getElementById("status");
   var listenBtn = document.getElementById("listen");
   var pendingWords = [];
-  var texts = { en: [], es: [], ht: [] };   // finished lines per language
+  var texts = {};            // finished lines per language, keyed by code
   var MAX_LINES = 300;
 
   // ---- audio (gapless per-sentence scheduling) -------------------------
@@ -169,10 +165,9 @@
       var n = ev.text.trim().split(/\s+/).filter(Boolean).length;
       pendingWords = pendingWords.slice(n);
       push("en", ev.text, ev.replay);
-    } else if (ev.kind === "es.text") {
-      push("es", ev.text, ev.replay);
-    } else if (ev.kind === "ht.text") {
-      push("ht", ev.text, ev.replay);
+    } else if (ev.kind.slice(-5) === ".text") {
+      var code = ev.kind.slice(0, -5);
+      if (texts[code]) push(code, ev.text, ev.replay);
     }
   }
 
@@ -181,38 +176,26 @@
   // English label on the button they have to press, so the control speaks the
   // language it delivers. The headphone note matters in a full auditorium:
   // audio out of a phone speaker carries to everyone nearby.
-  // Service times are the congregation's, not the translator's — someone
-  // reading this is deciding when to come back, not when software starts.
-  var TIMES = {
-    en: "Sunday 10:00 am &amp; 7:00 pm<br>Wednesday 7:30 pm",
-    es: "Domingo 10:00 am y 7:00 pm<br>Miércoles 7:30 pm",
-    ht: "Dimanch 10:00 am ak 7:00 pm<br>Mèkredi 7:30 pm"
-  };
-  var STRINGS = {
-    en: { listen: "🔊 Listen",    listening: "🔊 Listening",  phones: "",
-          sbTitle: "No service in progress",
-          sbBody: "Live translation will appear here automatically when the service begins." },
-    es: { listen: "🔊 Escuchar",  listening: "🔊 Escuchando",
-          phones: "Usa audífonos para no molestar a los demás.",
-          sbTitle: "No hay servicio en este momento",
-          sbBody: "La traducción en vivo aparecerá aquí automáticamente cuando comience el servicio." },
-    ht: { listen: "🔊 Koute",     listening: "🔊 Ap koute",
-          phones: "Tanpri sèvi ak ekoutè pou ou pa deranje lòt moun.",
-          sbTitle: "Pa gen sèvis kounye a",
-          sbBody: "Tradiksyon an dirèk ap parèt isit la otomatikman lè sèvis la kòmanse." }
-  };
+  // Filled from /config.json before the socket opens; see site.json.
+  var TIMES = {}, STRINGS = {}, LANGS = [];
   var phonesEl = document.getElementById("phones");
+  function hasAudio(code) {
+    for (var i = 0; i < LANGS.length; i++)
+      if (LANGS[i].code === code) return !!LANGS[i].audio;
+    return false;
+  }
   function applyLang() {
     var s = STRINGS[lang] || STRINGS.en;
+    if (!s) return;
     listenBtn.textContent = listening ? s.listening : s.listen;
-    listenBtn.hidden = (lang === "en") || live === false;
+    listenBtn.hidden = !hasAudio(lang) || live === false;
     phonesEl.textContent = s.phones;
     phonesEl.hidden = !s.phones || live === false;
     document.getElementById("sb-title").textContent = s.sbTitle;
     document.getElementById("sb-body").textContent = s.sbBody;
     document.getElementById("sb-times").innerHTML = TIMES[lang] || TIMES.en;
   }
-  applyLang();   // render the standby copy before the first status arrives
+
 
   // ---- live / standby ---------------------------------------------------
   // The server stays up between services, so "connected" and "a service is
@@ -231,7 +214,8 @@
     statusEl.textContent = on ? "live" : "standby";
     if (!on) {
       // Drop the finished service's transcript so the next one starts clean.
-      texts = { en: [], es: [], ht: [] };
+      texts = {};
+      LANGS.forEach(function (l) { texts[l.code] = []; });
       pendingWords = [];
       render();
     }
@@ -259,7 +243,37 @@
       retry = Math.min(retry * 2, 15000);
     };
   }
-  connect();
+  // ---- boot: site config first, then the socket -------------------------
+  // Languages, wording and service times are congregation-specific, so they
+  // come from the server rather than being baked into this file.
+  function applyConfig(cfg) {
+    LANGS = cfg.languages || [];
+    TIMES = cfg.service_times || {};
+    STRINGS = {};
+    texts = {};
+    var nav = document.getElementById("langs"), html = "";
+    LANGS.forEach(function (l) {
+      STRINGS[l.code] = l.strings || {};
+      texts[l.code] = [];
+      html += '<button data-lang="' + esc(l.code) + '" aria-pressed="' +
+              (l.code === lang) + '">' + esc(l.label) + "</button>";
+    });
+    nav.innerHTML = html;
+    if (!texts[lang] && LANGS.length) lang = LANGS[0].code;
+    if (cfg.app_name) {
+      document.querySelector("header h1").textContent = cfg.app_name;
+      document.title = cfg.app_name;
+    }
+    document.getElementById("foot").textContent =
+      (cfg.church_name ? cfg.church_name + " · " : "") + "live machine translation";
+    applyLang();
+    render();
+  }
+  fetch("/config.json", { cache: "no-store" })
+    .then(function (r) { return r.json(); })
+    .then(applyConfig)
+    .catch(function () {})       // page still works; buttons just stay empty
+    .then(connect);
 
   // Installable app: register the shell worker. Failure is non-fatal — the
   // page works identically without it, just not installable/offline-tolerant.

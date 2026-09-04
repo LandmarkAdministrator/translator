@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -34,6 +35,33 @@ from web import ws as wsproto
 from web.bus import BUS, frame_binary
 
 STATIC_DIR = Path(__file__).parent / "static"
+SITE_CONFIG = Path(os.environ.get("TRANSLATOR_SITE_CONFIG",
+                                  Path(__file__).parent.parent.parent / "config" / "site.json"))
+
+# Serving a broken config as a 500 would leave the page with no languages at
+# all; these defaults keep English text working while the real file is fixed.
+_FALLBACK_SITE = {
+    "church_name": "", "app_name": "Live Translation", "service_times": {},
+    "languages": [{"code": "en", "label": "English", "audio": False, "strings": {
+        "listen": "🔊 Listen", "listening": "🔊 Listening", "phones": "",
+        "sbTitle": "No service in progress",
+        "sbBody": "Live translation will appear here when the service begins."}}],
+}
+
+
+def site_config_bytes() -> bytes:
+    """Current site config as JSON, re-read each request so edits land without
+    a restart. Never raises: a malformed file degrades to English-only."""
+    try:
+        raw = json.loads(SITE_CONFIG.read_text(encoding="utf-8"))
+        if not raw.get("languages"):
+            raise ValueError("no languages configured")
+        return json.dumps({k: v for k, v in raw.items()
+                           if not k.startswith("_")}).encode()
+    except Exception as e:
+        logger.error("[web] site config unusable ({}: {}) — serving English only",
+                     type(e).__name__, e)
+        return json.dumps(_FALLBACK_SITE).encode()
 QUEUE_MAX = 300
 AUDIO_DROP_ABOVE = 150  # if a client is this far behind, stop sending it audio
 PING_INTERVAL = 20.0
@@ -260,7 +288,13 @@ class LiveServer:
                  ".png": "image/png", ".webmanifest": "application/manifest+json",
                  ".json": "application/json", ".css": "text/css"}
         extra = ""
-        if clean in ("/", "/index.html"):
+        if clean == "/config.json":
+            # Congregation-specific settings (name, service times, languages).
+            # Served rather than baked in so a new deployment edits one file.
+            body = site_config_bytes()
+            ctype, status = types[".json"], "200 OK"
+            extra = "Cache-Control: no-cache\r\n"
+        elif clean in ("/", "/index.html"):
             body = (STATIC_DIR / "index.html").read_bytes()
             ctype, status = types[".html"], "200 OK"
         else:

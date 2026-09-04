@@ -113,6 +113,7 @@ Examples:
     language_names = {
         "es": "Spanish",
         "ht": "Haitian Creole",
+        "ru": "Russian",
         "fr": "French",
         "pt": "Portuguese",
         "de": "German",

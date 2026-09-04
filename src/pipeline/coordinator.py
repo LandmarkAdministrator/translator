@@ -937,6 +937,7 @@ def main():
     language_names = {
         "es": "Spanish",
         "ht": "Haitian Creole",
+        "ru": "Russian",
         "fr": "French",
         "de": "German",
         "pt": "Portuguese",
