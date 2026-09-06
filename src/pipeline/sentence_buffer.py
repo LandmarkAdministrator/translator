@@ -53,6 +53,9 @@ _LEAD_PUNCT = re.compile(r'^\s*[.?!,;:]+\s*')
 # the sentence it actually closes instead of being discarded.
 _LEAD_SENT = re.compile(r'^\s*([.?!]+)\s*')
 
+# A sentence mark with more text after it: two sentences sharing one buffer.
+_INTERNAL_SENT = re.compile(r'([.?!])\s+(?=\S)')
+
 
 def _clean_join(fragments: List[str]) -> str:
     """Concatenate Parakeet fragments and normalize whitespace.
@@ -204,6 +207,24 @@ class SentenceBuffer:
             self.last_reason = "punctuation"
             return self._emit()
 
+        # A mark can also land mid-fragment ("name. Now the Bible"), leaving
+        # two sentences in one buffer. NLLB drops one of them when that
+        # happens -- measured at 10% of segments losing content outright, every
+        # case multi-sentence -- so split there too, not just at fragment heads.
+        if self.punct_boundary:
+            split = self._internal_split()
+            if split is not None:
+                head, tail = split
+                self._frags = [head]
+                out = self._emit()
+                self.last_reason = "punct_internal"
+                if tail.strip():
+                    self._first_start_wall = start_wall
+                    self._first_recv_monotonic = now
+                    self._last_recv_monotonic = now
+                    self._frags = [tail]
+                return out
+
         # Word cap: bound how late an unpunctuated run can arrive. Ignores the
         # min-words floor by definition (we are over it).
         if self.max_emit_words and self._word_count() >= self.max_emit_words:
@@ -262,6 +283,20 @@ class SentenceBuffer:
         if _ABBREV_TAIL.search(text):
             return False
         return True
+
+    def _internal_split(self):
+        """Split at a sentence mark that has text after it, if the part before
+        is worth sending. Returns (head_including_mark, tail) or None."""
+        text = _clean_join(self._frags)
+        best = None
+        for m in _INTERNAL_SENT.finditer(text):
+            head = text[:m.end(1)]
+            if _ABBREV_TAIL.search(head):
+                continue
+            if len([w for w in head.split() if any(c.isalnum() for c in w)]) < self.min_emit_words:
+                continue
+            best = (head, text[m.end():])
+        return best
 
     def _word_count(self) -> int:
         text = _clean_join(self._frags)
