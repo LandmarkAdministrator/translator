@@ -123,6 +123,7 @@ class SentenceBuffer:
         self.silence_min_words = silence_min_words
         self.strip_lead_punct = strip_lead_punct
 
+        self.last_reason: str = ""    # why the most recent emit fired
         self._frags: List[str] = []
         self._first_start_wall: float = 0.0       # start-wall of first fragment
         self._first_recv_monotonic: float = 0.0   # when we received the first frag
@@ -173,21 +174,25 @@ class SentenceBuffer:
         # Punctuation flush takes priority — no need to wait for silence —
         # but only if we have enough words to be worth translating.
         if self._ends_sentence() and self._has_min_words():
+            self.last_reason = "punctuation"
             return self._emit()
 
         # Word cap: bound how late an unpunctuated run can arrive. Ignores the
         # min-words floor by definition (we are over it).
         if self.max_emit_words and self._word_count() >= self.max_emit_words:
+            self.last_reason = "word_cap"
             return self._emit()
 
         # Hard timeout can trip even on the arrival of a new fragment; this
         # is a safety valve against unbounded growth, so it ignores min_words.
         if (now - self._first_recv_monotonic) >= self.hard_timeout:
+            self.last_reason = "hard_timeout"
             return self._emit()
 
         # Size-based safety valve — same intent as hard_timeout but watches
         # accumulated text length instead of elapsed time.
         if self._joined_length() >= self.max_buffer_chars:
+            self.last_reason = "size_cap"
             return self._emit()
 
         return None
@@ -199,6 +204,7 @@ class SentenceBuffer:
         now = now if now is not None else time.monotonic()
         if ((now - self._last_recv_monotonic) >= self.silence_timeout
                 and self._word_count() >= self.silence_min_words):
+            self.last_reason = "silence"
             return self._emit()
         if self.max_emit_words and self._word_count() >= self.max_emit_words:
             return self._emit()
@@ -217,6 +223,7 @@ class SentenceBuffer:
         """
         if not self._frags:
             return None
+        self.last_reason = "shutdown"
         return self._emit(force=True)
 
     # -------------------------------------------------------------- internals

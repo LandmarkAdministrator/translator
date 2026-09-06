@@ -47,6 +47,9 @@ def main() -> int:
 
     step = int(push_secs * sr)
     frags = []
+    chunks = []       # EVERY chunk, including those that produced no text —
+                      # production only runs the silence tick on those, so a
+                      # faithful replay needs to know where they are.
     prev = 0          # the server returns cumulative tokens; fragments are the diff
     start = time.monotonic()
     for i in range(0, len(audio), step):
@@ -68,12 +71,14 @@ def main() -> int:
         if "error" in msg:
             sys.exit(f"server error: {msg['error']}")
         toks = msg.get("tokens") or []
+        txt = ""
         if len(toks) > prev:
             txt = "".join(toks[prev:])
             prev = len(toks)
-            if txt:
-                frags.append({"t": round(time.monotonic() - start, 4),
-                              "audio_t": round(i / sr, 4), "text": txt})
+        now = round(time.monotonic() - start, 4)
+        chunks.append({"t": now, "audio_t": round(i / sr, 4), "text": txt})
+        if txt:
+            frags.append({"t": now, "audio_t": round(i / sr, 4), "text": txt})
 
     proc.stdin.write(struct.pack("<I", 0xFFFFFFFF))
     proc.stdin.flush()
@@ -89,10 +94,14 @@ def main() -> int:
     proc.wait(timeout=30)
 
     json.dump({"wav": wav, "sr": sr, "seconds": len(audio) / sr,
-               "realtime": realtime, "fragments": frags},
+               "realtime": realtime, "push_secs": push_secs,
+               "chunks": chunks, "fragments": frags},
               open(out_path, "w"), indent=1)
     gaps = [round(b["t"] - a["t"], 3) for a, b in zip(frags, frags[1:])]
-    print(f"  {len(frags)} fragments over {len(audio)/sr:.0f}s of audio -> {out_path}")
+    empty = sum(1 for c in chunks if not c["text"])
+    print(f"  {len(chunks)} chunks ({len(frags)} with text, {empty} empty) "
+          f"over {len(audio)/sr:.0f}s -> {out_path}")
+    print(f"  empty chunks are where production's silence tick can fire")
     if gaps:
         gs = sorted(gaps)
         print(f"  inter-fragment gap: median {gs[len(gs)//2]:.2f}s  "

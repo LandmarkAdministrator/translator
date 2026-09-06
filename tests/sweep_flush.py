@@ -22,24 +22,26 @@ LEAD = re.compile(r"^\s*[.?!,;:]")
 END = re.compile(r"[.?!][\"')\]]?\s*$")
 
 
-def replay(frags, **kw):
-    """Feed the captured stream, ticking between fragments so the silence
-    timeout can fire in the gaps exactly as it would live."""
+def replay(chunks, **kw):
+    """Replay one chunk at a time exactly as the coordinator does.
+
+    This matters more than it looks: coordinator.py calls feed() when a chunk
+    produced new text and *returns*, reaching tick() only on a chunk that
+    produced nothing. So the silence timeout is not continuous — it is
+    quantised to whole empty chunks, and any timeout below one chunk duration
+    behaves identically. An earlier version of this harness ticked every 100 ms
+    through the gaps, which production never does, and produced a difference
+    between 1.0 s and 1.5 s that does not exist on the real system.
+    """
     b = SentenceBuffer(**kw)
     out = []
-    prev_t = frags[0]["t"]
-    for f in frags:
-        # Tick through the gap at the cadence the audio callback would.
-        t = prev_t
-        while t < f["t"]:
-            t = min(t + 0.1, f["t"])
-            r = b.tick(now=t)
-            if r:
-                out.append(r[0])
-        r = b.feed(f["text"], start_wall=f["audio_t"], asr_time=0.0, now=f["t"])
+    for c in chunks:
+        if c["text"]:
+            r = b.feed(c["text"], start_wall=c["audio_t"], asr_time=0.0, now=c["t"])
+        else:
+            r = b.tick(now=c["t"])
         if r:
             out.append(r[0])
-        prev_t = f["t"]
     r = b.flush()
     if r:
         out.append(r[0])
@@ -61,8 +63,14 @@ def stats(sents):
 
 def main() -> int:
     path = sys.argv[1]
-    frags = json.load(open(path))["fragments"]
-    print(f"  {len(frags)} captured fragments, real arrival times\n")
+    d = json.load(open(path))
+    frags = d.get("chunks")
+    if not frags:
+        sys.exit("capture predates chunk recording; re-run capture_fragments.py")
+    empty = sum(1 for c in frags if not c["text"])
+    print(f"  {len(frags)} chunks of {d.get('push_secs')}s "
+          f"({len(frags)-empty} with text, {empty} empty), real arrival times")
+    print(f"  silence tick can only fire on the {empty} empty chunks\n")
 
     base = dict(min_emit_words=3, max_buffer_chars=800)
     print(f"  {'silence':>7} {'hard':>5} {'maxw':>5} | {'sents':>5} {'med':>4} {'p90':>4} "
