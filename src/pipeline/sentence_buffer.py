@@ -45,6 +45,10 @@ _ABBREV_TAIL = re.compile(
 # bracket / whitespace).
 _SENT_END = re.compile(r'[.?!]["\')\]]?\s*$')
 
+# Sentence-final punctuation opening a fragment: belongs to the sentence that
+# was already emitted, not the one starting here.
+_LEAD_PUNCT = re.compile(r'^\s*[.?!,;:]+\s*')
+
 
 def _clean_join(fragments: List[str]) -> str:
     """Concatenate Parakeet fragments and normalize whitespace.
@@ -77,6 +81,8 @@ class SentenceBuffer:
         min_emit_chars: int = 2,
         min_emit_words: int = 3,
         max_buffer_chars: int = 800,
+        max_emit_words: int = 40,
+        silence_min_words: int = 1,
     ):
         """
         Args:
@@ -87,9 +93,20 @@ class SentenceBuffer:
                 word count — this is the time-based safety valve.
             min_emit_chars: don't emit anything shorter than this (in chars,
                 post-cleanup). Floor against stray punctuation like ".".
-            min_emit_words: punctuation- and silence-triggered emits require at
-                least this many alphanumeric words. Hard-timeout, size-cap,
-                and shutdown flush() ignore this floor so no content is dropped.
+            min_emit_words: the PUNCTUATION trigger requires at least this many
+                words. A mark arriving mid-thought ("...Amen. And so") should
+                not split the sentence; waiting for more words keeps the unit
+                worth translating. Hard-timeout, size-cap, max_emit_words and
+                shutdown flush() ignore this floor so no content is dropped.
+            silence_min_words: the SILENCE trigger's own, much lower floor. A
+                short utterance followed by a real pause is a complete sentence
+                ("Amen.", "Let us pray."); holding it until the hard timeout
+                just adds seconds of latency to the shortest lines. Set to 0 to
+                flush anything at all on silence.
+            max_emit_words: force a flush once the buffer reaches this many
+                words even without punctuation. Bounds worst-case latency:
+                unpunctuated runs otherwise grow until the hard timeout, and
+                the audio for them lands long after it was spoken.
             max_buffer_chars: emit immediately when the joined buffer exceeds
                 this length, even if hard_timeout hasn't tripped. Catches
                 pause-prone speech that accumulates across multiple
@@ -101,6 +118,8 @@ class SentenceBuffer:
         self.min_emit_chars = min_emit_chars
         self.min_emit_words = min_emit_words
         self.max_buffer_chars = max_buffer_chars
+        self.max_emit_words = max_emit_words
+        self.silence_min_words = silence_min_words
 
         self._frags: List[str] = []
         self._first_start_wall: float = 0.0       # start-wall of first fragment
@@ -133,6 +152,15 @@ class SentenceBuffer:
         now = now if now is not None else time.monotonic()
 
         if not self._frags:
+            # A silence flush during the pause before the speaker's next word
+            # sends the sentence before the ASR has emitted its closing mark;
+            # that mark then arrives at the head of this fragment, belonging to
+            # a sentence already downstream. Drop it rather than open the next
+            # sentence with ". " — which reached congregants and, via NLLB,
+            # their translations too.
+            stripped = _LEAD_PUNCT.sub("", text, count=1)
+            if stripped.strip():
+                text = stripped
             self._first_start_wall = start_wall
             self._first_recv_monotonic = now
         self._frags.append(text)
@@ -142,6 +170,11 @@ class SentenceBuffer:
         # Punctuation flush takes priority — no need to wait for silence —
         # but only if we have enough words to be worth translating.
         if self._ends_sentence() and self._has_min_words():
+            return self._emit()
+
+        # Word cap: bound how late an unpunctuated run can arrive. Ignores the
+        # min-words floor by definition (we are over it).
+        if self.max_emit_words and self._word_count() >= self.max_emit_words:
             return self._emit()
 
         # Hard timeout can trip even on the arrival of a new fragment; this
@@ -161,7 +194,10 @@ class SentenceBuffer:
         if not self._frags:
             return None
         now = now if now is not None else time.monotonic()
-        if (now - self._last_recv_monotonic) >= self.silence_timeout and self._has_min_words():
+        if ((now - self._last_recv_monotonic) >= self.silence_timeout
+                and self._word_count() >= self.silence_min_words):
+            return self._emit()
+        if self.max_emit_words and self._word_count() >= self.max_emit_words:
             return self._emit()
         if (now - self._first_recv_monotonic) >= self.hard_timeout:
             return self._emit()
@@ -189,6 +225,10 @@ class SentenceBuffer:
         if _ABBREV_TAIL.search(text):
             return False
         return True
+
+    def _word_count(self) -> int:
+        text = _clean_join(self._frags)
+        return len([w for w in text.split() if any(c.isalnum() for c in w)])
 
     def _has_min_words(self) -> bool:
         """Count alphanumeric-bearing words; ignore pure-punctuation tokens."""

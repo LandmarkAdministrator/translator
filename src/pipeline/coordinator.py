@@ -389,15 +389,20 @@ class TranslationCoordinator:
                 hard_to = float(os.environ.get("SENTENCE_HARD_TIMEOUT", "10.0"))
                 min_words = int(os.environ.get("SENTENCE_MIN_WORDS", "3"))
                 max_chars = int(os.environ.get("SENTENCE_MAX_CHARS", "800"))
+                max_words = int(os.environ.get("SENTENCE_MAX_WORDS", "40"))
+                sil_min_words = int(os.environ.get("SENTENCE_SILENCE_MIN_WORDS", "1"))
                 self._sentence_buffer = SentenceBuffer(
                     silence_timeout=silence_to,
                     hard_timeout=hard_to,
                     min_emit_words=min_words,
                     max_buffer_chars=max_chars,
+                    max_emit_words=max_words,
+                    silence_min_words=sil_min_words,
                 )
                 print(
                     f"  sentence_buffer: silence={silence_to}s hard={hard_to}s "
-                    f"min_words={min_words} max_chars={max_chars}"
+                    f"min_words={min_words} max_words={max_words} "
+                    f"silence_min_words={sil_min_words} max_chars={max_chars}"
                 )
         else:
             download_root = (
