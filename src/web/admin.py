@@ -32,7 +32,6 @@ def gather_status() -> dict:
 
     st["service"] = _run(["systemctl", "--user", "is-active", "translate.service"]) or "unknown"
     st["engine"] = running_program()
-    st["legacy_override"] = LEGACY_FLAG.exists()
 
     if shutil.which("nvidia-smi"):
         gpu = _run(["nvidia-smi",
@@ -74,7 +73,6 @@ def gather_status() -> dict:
 
 
 OVERRIDE_FLAG = Path.home() / "translate-manual.flag"
-LEGACY_FLAG = Path.home() / "translate-use-legacy.flag"
 UNIT = Path.home() / ".config" / "systemd" / "user" / "translate.service"
 WANT_EXEC = str(Path.home() / "bin" / "start-translate-unified")
 
@@ -93,7 +91,9 @@ def running_program() -> str:
     if path.endswith("start-translate-unified"):
         return "unified streaming (parakeet-unified-en-0.6b)"
     if path:
-        return f"LEGACY translate.py  [{Path(path).name}]"
+        # The legacy program was retired 2026-09-06. Anything else pointing
+        # here is a misconfiguration, not a supported mode.
+        return f"UNEXPECTED [{Path(path).name}] — should be start-translate-unified"
     return "unknown"
 
 
@@ -102,10 +102,7 @@ def _ensure_program() -> Optional[str]:
 
     The scheduler enforces this every five minutes, but a button press is not
     the scheduler: without this, Start would happily launch whatever the unit
-    last pointed at. Honours ~/translate-use-legacy.flag for a deliberate
-    fallback."""
-    if LEGACY_FLAG.exists():
-        return None
+    last pointed at."""
     exe = _run(["systemctl", "--user", "show", "translate.service",
                 "-p", "ExecStart", "--value"])
     if WANT_EXEC in (exe or ""):
@@ -256,13 +253,13 @@ function refresh(){
     if(d.sentences_seen!==undefined)t+=tile('Sentences',esc(d.sentences_seen));
     if(d.errors_seen!==undefined)t+=tile('Errors',esc(d.errors_seen),d.errors_seen>0?'bad':'good');
     t+=tile('Schedule',d.manual_override?'PAUSED':'automatic',d.manual_override?'warn':'good');
-    var legacy=(d.engine||'').indexOf('LEGACY')>=0;
-    t+=tile('Program',legacy?'LEGACY':'unified',legacy?'bad':'good');
+    var wrongprog=(d.engine||'').indexOf('UNEXPECTED')>=0;
+    t+=tile('Program',wrongprog?'WRONG':'unified',wrongprog?'bad':'good');
     document.getElementById('tiles').innerHTML=t;
     var w=document.getElementById('warn');
     var warn='';
-    if(legacy)warn='⚠ Running the LEGACY program. The congregation page will show '+
-      '"no service in progress" even while audio plays. Press Restart to switch back.';
+    if(wrongprog)warn='⚠ The service is pointed at an unexpected program. Press '+
+      'Restart to put it back on the unified stack.';
     else if(d.manual_override)warn='⚠ The automatic schedule is PAUSED. Translation will NOT '+
       'start by itself for the next service. Press "Resume automatic schedule" when done.';
     w.hidden=!warn; if(warn)w.textContent=warn;
