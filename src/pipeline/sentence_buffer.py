@@ -212,17 +212,8 @@ class SentenceBuffer:
         # happens -- measured at 10% of segments losing content outright, every
         # case multi-sentence -- so split there too, not just at fragment heads.
         if self.punct_boundary:
-            split = self._internal_split()
-            if split is not None:
-                head, tail = split
-                self._frags = [head]
-                out = self._emit()
-                self.last_reason = "punct_internal"
-                if tail.strip():
-                    self._first_start_wall = start_wall
-                    self._first_recv_monotonic = now
-                    self._last_recv_monotonic = now
-                    self._frags = [tail]
+            out = self._split_head(now=now, start_wall=start_wall)
+            if out is not None:
                 return out
 
         # Word cap: bound how late an unpunctuated run can arrive. Ignores the
@@ -250,15 +241,26 @@ class SentenceBuffer:
         if not self._frags:
             return None
         now = now if now is not None else time.monotonic()
+        # A complete sentence at the head of the buffer leaves on the next
+        # tick too, so a fragment carrying two marks ("...prayed. Amen. Now")
+        # drains one sentence per chunk instead of holding the second until a
+        # timeout releases it glued to whatever followed.
+        if self.punct_boundary:
+            out = self._split_head()
+            if out is not None:
+                return out
         if ((now - self._last_recv_monotonic) >= self.silence_timeout
                 and self._word_count() >= self.silence_min_words):
             self.last_reason = "silence"
             return self._emit()
         if self.max_emit_words and self._word_count() >= self.max_emit_words:
+            self.last_reason = "word_cap"
             return self._emit()
         if (now - self._first_recv_monotonic) >= self.hard_timeout:
+            self.last_reason = "hard_timeout"
             return self._emit()
         if self._joined_length() >= self.max_buffer_chars:
+            self.last_reason = "size_cap"
             return self._emit()
         return None
 
@@ -285,18 +287,53 @@ class SentenceBuffer:
         return True
 
     def _internal_split(self):
-        """Split at a sentence mark that has text after it, if the part before
-        is worth sending. Returns (head_including_mark, tail) or None."""
+        """Split at the FIRST sentence mark that has text after it and enough
+        words before it to be worth sending. Returns (head_including_mark,
+        tail) or None.
+
+        First, not last: until 2026-09-06 this kept the last candidate, so a
+        buffer holding "A. B. C" went out as "A. B." — precisely the
+        two-sentence segment NLLB drops content from. Later marks are found
+        again by the next feed() or tick().
+        """
         text = _clean_join(self._frags)
-        best = None
         for m in _INTERNAL_SENT.finditer(text):
             head = text[:m.end(1)]
             if _ABBREV_TAIL.search(head):
                 continue
             if len([w for w in head.split() if any(c.isalnum() for c in w)]) < self.min_emit_words:
                 continue
-            best = (head, text[m.end():])
-        return best
+            return (head, text[m.end():])
+        return None
+
+    def _split_head(self, now: Optional[float] = None,
+                    start_wall: Optional[float] = None):
+        """Emit the first complete sentence if the buffer holds more than one;
+        the remainder stays buffered. From feed() the remainder arrived with
+        this fragment, so it takes the fragment's clock; from tick() it
+        arrived with the most recent one, so it keeps that arrival time. It is
+        never given a fresh clock — a remainder must not earn itself a whole
+        new hard_timeout after every split."""
+        split = self._internal_split()
+        if split is None:
+            return None
+        head, tail = split
+        first_wall = self._first_start_wall
+        last_recv = self._last_recv_monotonic
+        self._frags = [head]
+        out = self._emit()
+        self.last_reason = "punct_internal"
+        if tail.strip():
+            self._frags = [tail]
+            if now is not None:
+                self._first_start_wall = start_wall if start_wall is not None else first_wall
+                self._first_recv_monotonic = now
+                self._last_recv_monotonic = now
+            else:
+                self._first_start_wall = first_wall
+                self._first_recv_monotonic = last_recv
+                self._last_recv_monotonic = last_recv
+        return out
 
     def _word_count(self) -> int:
         text = _clean_join(self._frags)

@@ -94,6 +94,41 @@ b = SentenceBuffer(silence_timeout=99, hard_timeout=99, min_emit_words=2, max_em
 got, _ = feed_all(b, [" just", "ice", " for all."])
 check("subwords joined", got, ["justice for all."])
 
+print("\n11. two sentences in one fragment split at the FIRST mark, one per call")
+b = SentenceBuffer(silence_timeout=99, hard_timeout=99, min_emit_words=3, max_emit_words=0,
+                   punct_boundary=True)
+got, t = feed_all(b, ["First sentence here. Second one too. Third begins"])
+check("feed releases only the first", got, ["First sentence here."])
+check("reason is punct_internal", b.last_reason, "punct_internal")
+got = b.tick(now=t + 0.1)
+check("tick releases the second without waiting on a timeout",
+      got[0] if got else None, "Second one too.")
+check("remainder stays buffered", "".join(b._frags).strip(), "Third begins")
+
+print("\n12. a split remainder from feed() takes that fragment's clock")
+b = SentenceBuffer(silence_timeout=99, hard_timeout=5.0, min_emit_words=3, max_emit_words=0,
+                   punct_boundary=True)
+b.feed("one two three four", start_wall=0.0, asr_time=0.0, now=100.0)
+got = b.feed(" five six seven. eight nine", start_wall=1.0, asr_time=0.0, now=101.0)
+check("head released", got[0] if got else None, "one two three four five six seven.")
+check("not timed out 4.9 s after the remainder arrived", b.tick(now=105.9), None)
+got = b.tick(now=106.0)
+check("hard timeout runs from the remainder's arrival", got[0] if got else None, "eight nine")
+check("reason recorded by tick", b.last_reason, "hard_timeout")
+
+print("\n13. a split remainder from tick() keeps its arrival time (no fresh timeout)")
+b = SentenceBuffer(silence_timeout=99, hard_timeout=5.0, min_emit_words=3, max_emit_words=0,
+                   punct_boundary=True)
+got = b.feed("alpha beta gamma delta. epsilon zeta eta. theta iota",
+             start_wall=0.0, asr_time=0.0, now=100.0)
+check("feed releases the first", got[0] if got else None, "alpha beta gamma delta.")
+got = b.tick(now=101.5)
+check("tick releases the second", got[0] if got else None, "epsilon zeta eta.")
+check("remainder not timed out at 104.9", b.tick(now=104.9), None)
+got = b.tick(now=105.0)
+check("remainder times out 5 s after it ARRIVED (t=100), not after the split",
+      got[0] if got else None, "theta iota")
+
 print()
 if FAIL:
     print(f"{len(FAIL)} FAILED: {FAIL}")
