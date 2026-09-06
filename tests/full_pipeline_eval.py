@@ -163,8 +163,9 @@ def main() -> int:
     for k in sorted(range(len(new)), key=lambda k: sims[k])[:5]:
         print(f"    [{sims[k]:.3f}] EN {new[k][:84]}")
         print(f"             ES {tgt[k][:84]}")
-    json.dump({"en": new, **{k: v[0] for k, v in results.items()}},
-              open("/tmp/full_eval_out.json", "w"))
+    out = Path(sys.argv[1]).with_suffix(".translations.json")
+    json.dump({"en": new, **{k: v[0] for k, v in results.items()}}, open(out, "w"))
+    print(f"\n  translations written to {out}")
     return 0
 
 

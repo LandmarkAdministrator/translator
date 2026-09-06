@@ -9,10 +9,13 @@ ASR reported — which are the real sentence boundaries.
 """
 import json, re, sys
 from difflib import SequenceMatcher
-S=("/tmp/claude-1000/-home-administrator-Projects-translator/"
-   "5dfc0a3d-3365-4a0c-ac84-9df19d0a44b7/scratchpad/")
+# Input: a JSON file with "asis" (segments as they were sent to translation)
+# and "thoughts" (the same text regrouped at the ASR's sentence marks).
+#     python3 tests/punct_translation_experiment.py exp2.json
+if len(sys.argv) < 2:
+    sys.exit(__doc__ + "\nusage: punct_translation_experiment.py EXPERIMENT_JSON")
 LEAD=re.compile(r"^\s*[.?!,;:]+\s*")
-d=json.load(open(S+"exp2.json")); asis=d["asis"]; thoughts=d["thoughts"]
+d=json.load(open(sys.argv[1])); asis=d["asis"]; thoughts=d["thoughts"]
 
 def norm(s): return [w for w in re.sub(r"[^\w\s]"," ",s.lower()).split() if w]
 def sim(a,b):

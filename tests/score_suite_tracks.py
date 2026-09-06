@@ -119,7 +119,9 @@ def main() -> int:
         print(f"    {name}: {len(allw)} sentences, median {statistics.median(allw):.0f}w, "
               f"p90 {allw[int(len(allw)*0.9)]}w, max {max(allw)}w")
 
-    json.dump({k: v for k, v in new_b.items()}, open("/tmp/suite_new_sents.json", "w"))
+    out = Path(sys.argv[1]).with_suffix(".sentences.json")
+    json.dump({k: v for k, v in new_b.items()}, open(out, "w"))
+    print(f"\n  per-track sentences written to {out}")
     return 0
 
 
