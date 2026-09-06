@@ -71,14 +71,20 @@ def main() -> int:
         if "error" in msg:
             sys.exit(f"server error: {msg['error']}")
         toks = msg.get("tokens") or []
+        times = msg.get("timestamps") or []
         txt = ""
+        new_toks, new_times = [], []
         if len(toks) > prev:
-            txt = "".join(toks[prev:])
+            new_toks = toks[prev:]
+            new_times = [float(x) for x in times[prev:len(toks)]] if times else []
+            txt = "".join(new_toks)
             prev = len(toks)
         now = round(time.monotonic() - start, 4)
-        chunks.append({"t": now, "audio_t": round(i / sr, 4), "text": txt})
+        rec = {"t": now, "audio_t": round(i / sr, 4), "text": txt,
+               "tokens": new_toks, "times": new_times}
+        chunks.append(rec)
         if txt:
-            frags.append({"t": now, "audio_t": round(i / sr, 4), "text": txt})
+            frags.append(rec)
 
     proc.stdin.write(struct.pack("<I", 0xFFFFFFFF))
     proc.stdin.flush()
@@ -86,10 +92,13 @@ def main() -> int:
     if line:
         msg = json.loads(line)
         toks = msg.get("tokens") or []
+        times = msg.get("timestamps") or []
         if len(toks) > prev:
-            frags.append({"t": round(time.monotonic() - start, 4),
-                          "audio_t": round(len(audio) / sr, 4),
-                          "text": "".join(toks[prev:])})
+            rec = {"t": round(time.monotonic() - start, 4),
+                   "audio_t": round(len(audio) / sr, 4),
+                   "text": "".join(toks[prev:]), "tokens": toks[prev:],
+                   "times": [float(x) for x in times[prev:len(toks)]] if times else []}
+            chunks.append(rec); frags.append(rec)
     proc.stdin.close()
     proc.wait(timeout=30)
 

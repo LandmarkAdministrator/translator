@@ -49,6 +49,10 @@ _SENT_END = re.compile(r'[.?!]["\')\]]?\s*$')
 # was already emitted, not the one starting here.
 _LEAD_PUNCT = re.compile(r'^\s*[.?!,;:]+\s*')
 
+# Just the sentence-final marks, captured, so the boundary can be moved onto
+# the sentence it actually closes instead of being discarded.
+_LEAD_SENT = re.compile(r'^\s*([.?!]+)\s*')
+
 
 def _clean_join(fragments: List[str]) -> str:
     """Concatenate Parakeet fragments and normalize whitespace.
@@ -84,6 +88,7 @@ class SentenceBuffer:
         max_emit_words: int = 40,
         silence_min_words: int = 1,
         strip_lead_punct: bool = True,
+        punct_boundary: bool = False,
     ):
         """
         Args:
@@ -122,6 +127,7 @@ class SentenceBuffer:
         self.max_emit_words = max_emit_words
         self.silence_min_words = silence_min_words
         self.strip_lead_punct = strip_lead_punct
+        self.punct_boundary = punct_boundary
 
         self.last_reason: str = ""    # why the most recent emit fired
         self._frags: List[str] = []
@@ -153,6 +159,27 @@ class SentenceBuffer:
         # SentencePiece tokenization. Stripping here would break the
         # `" just"` + `"ice"` = `" justice"` joining in _clean_join.
         now = now if now is not None else time.monotonic()
+
+        # A fragment opening with sentence-final punctuation is the ASR
+        # telling us the text already buffered was a complete sentence: it
+        # only knows once it has heard into the next one. Closing on that mark
+        # is the model's own boundary, so it never cuts mid-thought the way a
+        # pause- or word-count trigger does. The mark is kept, which is also
+        # what gives the page properly terminated sentences.
+        if self._frags and self.punct_boundary:
+            m = _LEAD_SENT.match(text)
+            if m and self._has_min_words():
+                self._frags.append(m.group(1))
+                out = self._emit()
+                self.last_reason = "punct_boundary"
+                rest = text[m.end():]
+                if rest.strip():
+                    self._first_start_wall = start_wall
+                    self._first_recv_monotonic = now
+                    self._frags.append(rest)
+                    self._last_recv_monotonic = now
+                    self._asr_accum += asr_time
+                return out
 
         if not self._frags:
             # A silence flush during the pause before the speaker's next word
