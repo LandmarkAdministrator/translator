@@ -38,10 +38,10 @@ class PipelineConfig:
     language_name: str
     output_device: str = "default"
     output_channel: Optional[int] = None  # 0=left, 1=right, None=both/mono
-    # A language carried only by the web page. The Behringer has two output
-    # channels and they are taken by Spanish and Creole, so a third language
-    # has nowhere to play in the room; without this it would open a stream on
-    # some unrelated device and voice the sermon into an empty jack.
+    # A language carried only by the web page, with no room audio at all.
+    # Not currently used: languages past the Behringer's two channels go out
+    # the machine's own analog jack instead. Kept because a deployment without
+    # a spare output needs it, and because it costs nothing to leave in.
     web_only: bool = False
     translation_model: Optional[str] = None
     tts_voice: str = "default"
