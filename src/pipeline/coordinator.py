@@ -391,6 +391,7 @@ class TranslationCoordinator:
                 max_chars = int(os.environ.get("SENTENCE_MAX_CHARS", "800"))
                 max_words = int(os.environ.get("SENTENCE_MAX_WORDS", "40"))
                 sil_min_words = int(os.environ.get("SENTENCE_SILENCE_MIN_WORDS", "1"))
+                strip_lead = os.environ.get("SENTENCE_STRIP_LEAD_PUNCT", "1") != "0"
                 self._sentence_buffer = SentenceBuffer(
                     silence_timeout=silence_to,
                     hard_timeout=hard_to,
@@ -398,6 +399,7 @@ class TranslationCoordinator:
                     max_buffer_chars=max_chars,
                     max_emit_words=max_words,
                     silence_min_words=sil_min_words,
+                    strip_lead_punct=strip_lead,
                 )
                 print(
                     f"  sentence_buffer: silence={silence_to}s hard={hard_to}s "

@@ -83,6 +83,7 @@ class SentenceBuffer:
         max_buffer_chars: int = 800,
         max_emit_words: int = 40,
         silence_min_words: int = 1,
+        strip_lead_punct: bool = True,
     ):
         """
         Args:
@@ -120,6 +121,7 @@ class SentenceBuffer:
         self.max_buffer_chars = max_buffer_chars
         self.max_emit_words = max_emit_words
         self.silence_min_words = silence_min_words
+        self.strip_lead_punct = strip_lead_punct
 
         self._frags: List[str] = []
         self._first_start_wall: float = 0.0       # start-wall of first fragment
@@ -158,9 +160,10 @@ class SentenceBuffer:
             # a sentence already downstream. Drop it rather than open the next
             # sentence with ". " — which reached congregants and, via NLLB,
             # their translations too.
-            stripped = _LEAD_PUNCT.sub("", text, count=1)
-            if stripped.strip():
-                text = stripped
+            if self.strip_lead_punct:
+                stripped = _LEAD_PUNCT.sub("", text, count=1)
+                if stripped.strip():
+                    text = stripped
             self._first_start_wall = start_wall
             self._first_recv_monotonic = now
         self._frags.append(text)
