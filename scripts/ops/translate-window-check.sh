@@ -71,7 +71,6 @@ ensure_program   # must run after log() exists
 [ -e "$HOME/translate-manual.flag" ] && exit 0
 
 dow=$(date +%u)
-hm10=$((10#$(date +%H%M)))
 
 # minutes-of-day helpers so DRAIN_MIN arithmetic is simple
 now_min=$(( 10#$(date +%H) * 60 + 10#$(date +%M) ))
@@ -117,14 +116,14 @@ fi
 # shell whose command line merely mentions the pattern (an admin ssh command,
 # this script's own invocation), which would make the backlog look "running"
 # forever and never start.
-worker_running() {
+worker_pids() {
   local pid comm
   for pid in $(pgrep -f "$WORKER_PAT" 2>/dev/null); do
     comm=$(cat "/proc/$pid/comm" 2>/dev/null || true)
-    case "$comm" in python*|Python*) return 0 ;; esac
+    case "$comm" in python*|Python*) echo "$pid" ;; esac
   done
-  return 1
 }
+worker_running() { [ -n "$(worker_pids)" ]; }
 
 # ---------- backlog side ----------
 if [ "$in_drain" -eq 1 ]; then
@@ -132,7 +131,11 @@ if [ "$in_drain" -eq 1 ]; then
   [ -e "$STOP_FLAG" ] || { touch "$STOP_FLAG"; log "draining backlog before service window"; }
   if [ "$in_live" -eq 1 ] && worker_running; then
     # Window is open and it still hasn't exited — live translation wins.
-    pkill -f "$WORKER_PAT"
+    # Kill only the PIDs worker_pids() validated by comm. A bare `pkill -f`
+    # here would match any process whose ARGUMENTS mention the pattern — an
+    # admin's ssh command, a grep — exactly the trap the comment above
+    # warns about, and one that killed live sessions on 2026-09-06.
+    for pid in $(worker_pids); do kill "$pid" 2>/dev/null; done
     log "backlog still running at window open -> force-stopped (stale claim reaper will recover the row)"
   fi
 else
