@@ -42,7 +42,7 @@ if not msg.get("ready"):
 print(f"[server ready in {time.time()-t0:.0f}s]")
 
 step = int(push_secs * sr)
-n_tokens = 0
+tokens = []          # protocol 2 replies are deltas; accumulate them here
 t0 = time.time()
 lat = []
 for i in range(0, len(audio), step):
@@ -57,14 +57,15 @@ for i in range(0, len(audio), step):
     if "error" in msg:
         print("STEP ERROR:", msg["error"])
         sys.exit(1)
-    n_tokens = len(msg["tokens"])
+    tokens = tokens + msg["tokens"] if "count" in msg else msg["tokens"]
 proc.stdin.write(struct.pack("<I", 0xFFFFFFFF))
 proc.stdin.flush()
 msg = json.loads(proc.stdout.readline())
-text = "".join(msg["tokens"]).strip()
+tokens = tokens + msg["tokens"] if "count" in msg else msg["tokens"]
+text = "".join(tokens).strip()
 Path(out_txt).write_text(text + "\n")
 dur = len(audio) / sr
 print(f"[{dur:.0f}s audio in {time.time()-t0:.1f}s wall; per-push decode "
       f"avg {sum(lat)/len(lat)*1000:.0f}ms max {max(lat)*1000:.0f}ms; "
-      f"{len(msg['tokens'])} tokens -> {out_txt}]")
+      f"{len(tokens)} tokens -> {out_txt}]")
 print("first 200 chars:", text[:200])

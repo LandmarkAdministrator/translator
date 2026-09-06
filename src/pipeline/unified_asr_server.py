@@ -227,7 +227,21 @@ def main() -> None:
               file=out, flush=True)
         return
 
-    print(json.dumps({"ready": True}), file=out, flush=True)
+    print(json.dumps({"ready": True, "protocol": 2}), file=out, flush=True)
+
+    # Protocol 2: each reply carries only what is new since the last one, plus
+    # a running total so the client can check it missed nothing. The earlier
+    # cumulative reply re-serialised the whole stream every 1.5 s — some 30k
+    # tokens by the third hour of a service — for a client that kept the tail.
+    sent = 0
+
+    def reply(**extra) -> None:
+        nonlocal sent
+        sent += len(all_tokens)
+        print(json.dumps({"tokens": all_tokens, "timestamps": all_times,
+                          "count": sent, **extra}), file=out, flush=True)
+        all_tokens.clear()
+        all_times.clear()
 
     stdin = sys.stdin.buffer
     while True:
@@ -238,8 +252,7 @@ def main() -> None:
         try:
             if n == FLUSH:
                 step(is_last=True)
-                print(json.dumps({"tokens": all_tokens, "timestamps": all_times, "eos": True}),
-                      file=out, flush=True)
+                reply(eos=True)
                 return
             buf = b""
             while len(buf) < n:
@@ -249,8 +262,7 @@ def main() -> None:
                 buf += chunk
             pending = np.concatenate([pending, np.frombuffer(buf, dtype=np.float32)])
             step()
-            print(json.dumps({"tokens": all_tokens, "timestamps": all_times}),
-                  file=out, flush=True)
+            reply()
         except Exception as e:
             print(json.dumps({"error": f"{type(e).__name__}: {e}"}), file=out, flush=True)
 

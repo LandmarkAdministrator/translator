@@ -23,6 +23,17 @@ import numpy as np
 import soundfile as sf
 
 
+def new_since(msg: dict, prev: int) -> tuple[list, list, int]:
+    """(new tokens, their times, new total) from a reply of either protocol."""
+    toks = msg.get("tokens") or []
+    times = [float(x) for x in (msg.get("timestamps") or [])]
+    if "count" in msg:                      # protocol 2: already a delta
+        return toks, times[:len(toks)], int(msg["count"])
+    if len(toks) <= prev:                   # protocol 1: cumulative
+        return [], [], prev
+    return toks[prev:], times[prev:len(toks)], len(toks)
+
+
 def main() -> int:
     wav, out_path = sys.argv[1], sys.argv[2]
     push_secs = float(sys.argv[3]) if len(sys.argv) > 3 else 1.0
@@ -50,7 +61,8 @@ def main() -> int:
     chunks = []       # EVERY chunk, including those that produced no text —
                       # production only runs the silence tick on those, so a
                       # faithful replay needs to know where they are.
-    prev = 0          # the server returns cumulative tokens; fragments are the diff
+    prev = 0          # protocol 1 returned cumulative tokens; fragments are the
+                      # diff. Protocol 2 returns only new tokens plus a count.
     start = time.monotonic()
     for i in range(0, len(audio), step):
         chunk = np.ascontiguousarray(audio[i:i + step], dtype=np.float32)
@@ -70,15 +82,8 @@ def main() -> int:
         msg = json.loads(line)
         if "error" in msg:
             sys.exit(f"server error: {msg['error']}")
-        toks = msg.get("tokens") or []
-        times = msg.get("timestamps") or []
-        txt = ""
-        new_toks, new_times = [], []
-        if len(toks) > prev:
-            new_toks = toks[prev:]
-            new_times = [float(x) for x in times[prev:len(toks)]] if times else []
-            txt = "".join(new_toks)
-            prev = len(toks)
+        new_toks, new_times, prev = new_since(msg, prev)
+        txt = "".join(new_toks)
         now = round(time.monotonic() - start, 4)
         rec = {"t": now, "audio_t": round(i / sr, 4), "text": txt,
                "tokens": new_toks, "times": new_times}
@@ -90,14 +95,11 @@ def main() -> int:
     proc.stdin.flush()
     line = proc.stdout.readline()
     if line:
-        msg = json.loads(line)
-        toks = msg.get("tokens") or []
-        times = msg.get("timestamps") or []
-        if len(toks) > prev:
+        new_toks, new_times, prev = new_since(json.loads(line), prev)
+        if new_toks:
             rec = {"t": round(time.monotonic() - start, 4),
                    "audio_t": round(len(audio) / sr, 4),
-                   "text": "".join(toks[prev:]), "tokens": toks[prev:],
-                   "times": [float(x) for x in times[prev:len(toks)]] if times else []}
+                   "text": "".join(new_toks), "tokens": new_toks, "times": new_times}
             chunks.append(rec); frags.append(rec)
     proc.stdin.close()
     proc.wait(timeout=30)

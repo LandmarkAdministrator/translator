@@ -36,15 +36,23 @@ EVICT_COMMITTED_SEC = 3.0
 
 
 class _RemoteResult:
-    """Duck-typed stand-in for onnx-asr's TimestampedResult (plus word ends)."""
+    """Duck-typed stand-in for onnx-asr's TimestampedResult (plus word ends).
 
-    __slots__ = ("text", "tokens", "timestamps", "ends")
+    A protocol-2 server sends only the tokens that are NEW since its previous
+    reply, plus `count`, its running total for the stream, so the client can
+    tell if it ever missed a reply. A protocol-1 server sends the whole stream
+    and no count; `count is None` is how the client tells them apart.
+    """
+
+    __slots__ = ("text", "tokens", "timestamps", "ends", "count")
 
     def __init__(self, tokens: List[str], timestamps: List[float],
-                 ends: Optional[List[float]] = None):
+                 ends: Optional[List[float]] = None,
+                 count: Optional[int] = None):
         self.tokens = tokens
         self.timestamps = timestamps
         self.ends = ends
+        self.count = count
         self.text = "".join(tokens)
 
 
@@ -56,7 +64,15 @@ class _RemoteUnifiedModel:
     interface for ParakeetASRBuffer — which then contributes LocalAgreement-2,
     committed-audio eviction, and the sentence buffer unchanged. Env overrides:
     UNIFIED_PYTHON (default ~/nemo-venv/bin/python), UNIFIED_SERVER (default:
-    unified_asr_server.py next to this file).
+    unified_asr_server.py next to this file), UNIFIED_REPLY_TIMEOUT (seconds,
+    default 30).
+
+    Every reply is read against a deadline. A dead or wedged server never
+    answers; silence is NOT that case — the server replies to every push,
+    with nothing new when nothing was said, so a quiet room still yields one
+    line per chunk. Decode takes ~165 ms per 1.5 s chunk on the RTX 3060, so
+    30 s is a stall, not a slow one. The unbounded readline() this replaces
+    left the audio thread hung until the scheduler's 900 s watchdog noticed.
     """
 
     is_streaming = True  # server owns the stream: labels are final once emitted
@@ -67,7 +83,10 @@ class _RemoteUnifiedModel:
             "UNIFIED_PYTHON", os.path.expanduser("~/nemo-venv/bin/python"))
         self._script = os.environ.get(
             "UNIFIED_SERVER", str(Path(__file__).parent / "unified_asr_server.py"))
+        self.reply_timeout = float(os.environ.get("UNIFIED_REPLY_TIMEOUT", "30"))
         self._proc = None
+        self._rbuf = b""      # read from the pipe, not yet consumed
+        self.protocol = 1
 
     def start(self) -> None:
         import json
@@ -76,55 +95,86 @@ class _RemoteUnifiedModel:
             [self._python, self._script],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None,
         )
-        line = self._proc.stdout.readline()  # blocks until the model is loaded
-        msg = json.loads(line) if line else {}
+        # ~40 s to load warm; a first-time download can take far longer.
+        msg = json.loads(self._read_reply(timeout=900.0) or b"{}")
         if not msg.get("ready"):
             raise RuntimeError(f"unified ASR server failed to start: {msg}")
+        self.protocol = int(msg.get("protocol", 1))
+
+    def alive(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
+
+    def _read_reply(self, timeout: float) -> bytes:
+        """One line from the server, or raise once `timeout` passes without one.
+
+        Reads the raw descriptor rather than the BufferedReader so select()
+        can never be fooled by bytes already sitting in Python's buffer.
+        """
+        import os
+        import select
+        fd = self._proc.stdout.fileno()
+        deadline = time.monotonic() + timeout
+        while b"\n" not in self._rbuf:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+                logger.error("unified ASR server: no reply in %.0fs — killing it", timeout)
+                self.stop()
+                raise RuntimeError(f"unified ASR server stalled (no reply in {timeout:.0f}s)")
+            chunk = os.read(fd, 1 << 16)
+            if not chunk:
+                raise RuntimeError("unified ASR server closed the pipe")
+            self._rbuf += chunk
+        line, _, self._rbuf = self._rbuf.partition(b"\n")
+        return line
 
     def recognize(self, audio: np.ndarray, sample_rate: int = SAMPLE_RATE) -> "_RemoteResult":
         import json
         import struct
-        if self._proc is None or self._proc.poll() is not None:
+        if not self.alive():
             raise RuntimeError("unified ASR server is not running")
         data = np.ascontiguousarray(audio, dtype=np.float32).tobytes()
         self._proc.stdin.write(struct.pack("<I", len(data)))
         self._proc.stdin.write(data)
         self._proc.stdin.flush()
-        line = self._proc.stdout.readline()
-        if not line:
-            raise RuntimeError("unified ASR server closed the pipe")
-        msg = json.loads(line)
+        msg = json.loads(self._read_reply(self.reply_timeout))
         if "error" in msg:
             raise RuntimeError(f"unified ASR server: {msg['error']}")
         return _RemoteResult(list(msg["tokens"]),
                              [float(t) for t in msg["timestamps"]],
-                             [float(t) for t in msg.get("ends", [])] or None)
+                             [float(t) for t in msg.get("ends", [])] or None,
+                             msg.get("count"))
 
     def flush(self) -> Optional["_RemoteResult"]:
-        """Signal end of stream; returns the final full-stream result."""
+        """Signal end of stream; returns whatever the server had left to say."""
         import json
         import struct
-        if self._proc is None or self._proc.poll() is not None:
+        if not self.alive():
             return None
         try:
             self._proc.stdin.write(struct.pack("<I", 0xFFFFFFFF))
             self._proc.stdin.flush()
-            line = self._proc.stdout.readline()
-            if not line:
-                return None
-            msg = json.loads(line)
+            msg = json.loads(self._read_reply(self.reply_timeout))
             if "error" in msg:
                 return None
             return _RemoteResult(list(msg["tokens"]),
-                                 [float(t) for t in msg["timestamps"]])
+                                 [float(t) for t in msg["timestamps"]],
+                                 None, msg.get("count"))
         except Exception:
             return None
 
     def stop(self) -> None:
-        if self._proc is not None:
+        if self._proc is None:
+            return
+        try:
+            self._proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            self._proc.terminate()
+            self._proc.wait(timeout=5.0)
+        except Exception:
             try:
-                self._proc.stdin.close()
-                self._proc.terminate()
+                self._proc.kill()
             except Exception:
                 pass
 
@@ -296,14 +346,8 @@ class ParakeetASRBuffer:
             asr_start = time.time()
             result = self._model.recognize(audio, sample_rate=SAMPLE_RATE)
             asr_time = time.time() - asr_start
-            toks = result.tokens
-            if len(toks) <= self._committed_count:
-                return None
-            new_tokens = toks[self._committed_count:]
-            first_ts = float(result.timestamps[self._committed_count]) \
-                if self._committed_count < len(result.timestamps) else 0.0
-            self._committed_count = len(toks)
-            new_text = _tokens_to_text(new_tokens)
+            new_tokens, first_ts = self._streaming_delta(result)
+            new_text = _tokens_to_text(new_tokens) if new_tokens else ""
             if not new_text:
                 return None
             return (new_text, self._session_start_wall + first_ts, asr_time)
@@ -368,13 +412,10 @@ class ParakeetASRBuffer:
             asr_start = time.time()
             result = self._model.flush()
             asr_time = time.time() - asr_start
-            if result is None or len(result.tokens) <= self._committed_count:
+            if result is None:
                 return None
-            new_tokens = result.tokens[self._committed_count:]
-            first_ts = float(result.timestamps[self._committed_count]) \
-                if self._committed_count < len(result.timestamps) else 0.0
-            self._committed_count = len(result.tokens)
-            text = _tokens_to_text(new_tokens)
+            new_tokens, first_ts = self._streaming_delta(result)
+            text = _tokens_to_text(new_tokens) if new_tokens else ""
             if not text:
                 return None
             return (text, self._session_start_wall + first_ts, asr_time)
@@ -399,6 +440,38 @@ class ParakeetASRBuffer:
         else:
             text_start_wall = self._buffer_start_wall
         return (text, text_start_wall, asr_time)
+
+    def alive(self) -> bool:
+        """False once the ASR backend is gone for good — the server died, or
+        was killed for stalling. A transient decode error leaves this True."""
+        if self._model is None:
+            return False
+        check = getattr(self._model, "alive", None)
+        return True if check is None else bool(check())
+
+    def _streaming_delta(self, result) -> Tuple[List[str], float]:
+        """New tokens, and the start time of the first, from a streaming reply
+        of either protocol (see _RemoteResult)."""
+        toks = list(result.tokens or [])
+        times = list(result.timestamps or [])
+        if result.count is None:
+            # Protocol 1: the whole stream; the diff is ours to take.
+            if len(toks) <= self._committed_count:
+                return [], 0.0
+            first = times[self._committed_count] if self._committed_count < len(times) else 0.0
+            new = toks[self._committed_count:]
+            self._committed_count = len(toks)
+            return new, float(first)
+        # Protocol 2: only what is new, plus the server's running total.
+        if not toks:
+            return [], 0.0
+        first = float(times[0]) if times else 0.0
+        self._committed_count += len(toks)
+        if result.count != self._committed_count:
+            logger.warning("unified ASR: token count drifted (server %s, client %s); resyncing",
+                           result.count, self._committed_count)
+            self._committed_count = int(result.count)
+        return toks, first
 
     def _maybe_trim(self, tokens, timestamps, ends, stable_len: int) -> None:
         """Evict audio whose words are already committed.
