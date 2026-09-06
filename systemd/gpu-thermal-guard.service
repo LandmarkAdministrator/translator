@@ -1,0 +1,14 @@
+# User unit: ~/.config/systemd/user/gpu-thermal-guard.service
+# The script is scripts/ops/gpu-thermal-guard.sh, installed to ~/bin. Exists
+# because the RTX 3060's OEM fan was replaced with a case fan; retire it once
+# the card is properly cooled.
+[Unit]
+Description=Stop live translation if the passively-cooled GPU overheats
+
+[Service]
+ExecStart=%h/bin/gpu-thermal-guard.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

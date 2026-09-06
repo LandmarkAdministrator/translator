@@ -1,0 +1,14 @@
+# User unit: ~/.config/systemd/user/translate-window.timer
+# Enable with: systemctl --user enable --now translate-window.timer
+[Unit]
+Description=Live translation schedule + hang watchdog (every 5 min)
+
+[Timer]
+# A minute after boot, reconcile state (covers reboots mid-window)
+OnStartupSec=60
+# Every 5 minutes: window boundaries all land on this grid, and the
+# in-window hang watchdog needs the frequent tick.
+OnCalendar=*-*-* *:00/5:00
+
+[Install]
+WantedBy=timers.target

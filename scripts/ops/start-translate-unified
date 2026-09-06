@@ -1,0 +1,41 @@
+#!/bin/bash
+# Service entry point: ExecStart of translate.service (systemd/). Installed to
+# ~/bin/start-translate-unified; translate-window-check.sh restores that
+# ExecStart if it is ever changed, so no other program can be started here.
+#
+# Runs the stack with parakeet-unified-en-0.6b (native streaming ASR in the
+# NeMo venv) + NLLB-1.3B + Kokoro/MMS. Chosen 2026-09-03 after the head-to-head:
+# sermon 2.69% WER at 8.0 s latency, versus the retired program's 3.34% at
+# 46.3 s.
+#
+# Writes to ~/translate.log — the fixed path translate-window-check.sh's stall
+# watchdog reads. The stack also writes loguru logs under ~/translator/logs/,
+# but those are gzipped on exit and so are no good for liveness checks.
+cd "$HOME/translator" || exit 1
+
+export PARAKEET_MODEL="unified-remote"
+export PARAKEET_PATH=""
+export UNIFIED_PYTHON="$HOME/nemo-venv/bin/python"
+# Context biasing: boost church vocabulary (Bible books, KJV forms, preacher
+# and place names) inside the decoder. Measured 2026-09-04: alpha 0.5 fixes
+# proper nouns ("Orr" -> "Oar") with no cost on out-of-domain speech, while
+# alpha 2.0 is damaging (sermon 2.26% -> 3.23%, deletions 20 -> 35). Remove
+# UNIFIED_BIAS_FILE to disable.
+export UNIFIED_BIAS_FILE="$HOME/translator/config/bias_phrases.txt"
+export UNIFIED_BIAS_ALPHA="0.5"
+
+# Congregation web page (live text + per-language audio) is served by its own
+# always-on unit (translate-web.service); this process only publishes to it
+# over the relay socket.
+export WEB_RELAY_SOCKET="${WEB_RELAY_SOCKET:-$XDG_RUNTIME_DIR/translate-web.sock}"
+
+# Sentence-buffer policy. These match the defaults in scripts/run_production.sh
+# since 2026-09-06 and are kept here so the service's configuration is visible
+# in one place: sentences close on the ASR's own punctuation boundary; the
+# hard timeout and word cap are safety valves (docs/CHANGES-2026-09-06.md §2).
+export SENTENCE_SILENCE_TIMEOUT="${SENTENCE_SILENCE_TIMEOUT:-30.0}"
+export SENTENCE_HARD_TIMEOUT="${SENTENCE_HARD_TIMEOUT:-15.0}"
+export SENTENCE_MAX_WORDS="${SENTENCE_MAX_WORDS:-60}"
+export SENTENCE_PUNCT_BOUNDARY="${SENTENCE_PUNCT_BOUNDARY:-1}"
+
+exec bash scripts/run_production.sh >> "$HOME/translate.log" 2>&1

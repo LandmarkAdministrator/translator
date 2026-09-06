@@ -1,0 +1,25 @@
+# User unit: ~/.config/systemd/user/translate.service
+#
+# The pipeline. Started and stopped inside service windows by
+# translate-window.timer; never enabled at boot. The launcher sets the
+# production environment and execs scripts/run_production.sh.
+# translate-window-check.sh restores this ExecStart every five minutes if it
+# is changed, so a different program cannot be started here by accident.
+# Restart=always: when the pipeline exits because its ASR backend died it comes
+# back with a fresh one about 45 s later, and the scheduler's MIN_UPTIME guard
+# leaves it alone while it loads.
+[Unit]
+Description=Translation server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/bin/start-translate-unified
+Restart=always
+RestartSec=5
+WorkingDirectory=%h
+# Give it 30 s to shut down cleanly when you power-off
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target

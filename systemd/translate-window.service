@@ -1,0 +1,9 @@
+# User unit: ~/.config/systemd/user/translate-window.service
+# Driven by translate-window.timer. The script is scripts/ops/translate-window-check.sh,
+# installed to ~/bin.
+[Unit]
+Description=Start/stop live translation based on service-window schedule
+
+[Service]
+Type=oneshot
+ExecStart=%h/bin/translate-window-check.sh

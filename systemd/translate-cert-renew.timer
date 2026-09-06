@@ -1,0 +1,18 @@
+# System unit (not --user): install to /etc/systemd/system/ and enable with
+#   sudo systemctl daemon-reload && sudo systemctl enable --now translate-cert-renew.timer
+#
+# Once a day, in the small hours. The install hook restarts translate-web
+# (a two-second reconnect for anyone on the page), so this must never land in
+# a service window; 03:20 is outside every one. Deliberately no Persistent=true:
+# a run missed while the machine was off would otherwise fire at the next
+# boot, which could be a Sunday morning. Certificates are six-day and renew
+# with three days left, so a missed night costs nothing.
+[Unit]
+Description=Daily renewal check for the Live Translation TLS certificate
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+RandomizedDelaySec=20m
+
+[Install]
+WantedBy=timers.target

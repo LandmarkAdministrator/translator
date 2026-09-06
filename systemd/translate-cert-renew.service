@@ -1,0 +1,11 @@
+# System unit (not --user); driven by translate-cert-renew.timer.
+# The script it runs is scripts/ops/translate-cert-renew.sh, installed to
+# /usr/local/sbin, with /etc/lego/translate-cert.env supplying the CA address.
+[Unit]
+Description=Renew Live Translation TLS certificate (internal CA)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/translate-cert-renew.sh
