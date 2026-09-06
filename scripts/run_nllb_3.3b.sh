@@ -24,4 +24,4 @@ echo "  NLLB_DEVICE=${NLLB_DEVICE:-auto}"
 echo "  WARNING: 3.3B in bf16 has hallucinated on this hardware in prior runs."
 echo "============================================================"
 
-exec ./venv/bin/python run.py --parakeet "$@"
+exec ./venv/bin/python run.py "$@"

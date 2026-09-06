@@ -10,7 +10,8 @@
 #   ./install.sh --rocm       # Force AMD ROCm installation
 #   ./install.sh --cuda       # Force NVIDIA CUDA installation
 #   ./install.sh --parakeet   # Also install onnx-asr + Parakeet ONNX model
-#                             # (enables the --parakeet streaming backend)
+#                             # (the ASR fallback when the NeMo venv is absent;
+#                             # production ASR: requirements-nemo.txt)
 #   ./install.sh --help       # Show help
 #
 # Note: CPU-only installation is not supported — the translator requires
@@ -702,14 +703,11 @@ EOF
     # ML/AI requirements
     # Minimums reflect the versions known to run on ROCm 7.2 / PyTorch 2.11.
     cat > "$INSTALL_DIR/requirements/ml.txt" << 'EOF'
-# ASR (Speech-to-Text)
-# faster-whisper bundles its own CUDA/ROCm runtime via CTranslate2; it runs on
-# the same torch install selected by install.sh (ROCm or CUDA).
-faster-whisper>=1.2.0
+# ASR (Speech-to-Text): the streaming model runs in its own venv
+# (requirements-nemo.txt); the onnx-asr fallback is installed by --parakeet.
 
 # Translation
 transformers>=5.0.0
-ctranslate2>=4.7.0
 sentencepiece>=0.1.99
 sacremoses>=0.1.1
 protobuf>=4.21.0
@@ -755,9 +753,6 @@ download_models() {
         venv_python python "$INSTALL_DIR/scripts/download_models.py" --all
     else
         # Fallback: download models manually
-        log "Downloading Whisper model..."
-        venv_python python -c "from faster_whisper import WhisperModel; WhisperModel('large-v3', device='cpu', download_root='$INSTALL_DIR/models/asr')"
-
         log "Downloading translation models..."
         venv_python python -c "from transformers import MarianMTModel, MarianTokenizer; MarianMTModel.from_pretrained('Helsinki-NLP/opus-mt-en-es', cache_dir='$INSTALL_DIR/models/translation'); MarianTokenizer.from_pretrained('Helsinki-NLP/opus-mt-en-es', cache_dir='$INSTALL_DIR/models/translation')"
         venv_python python -c "from transformers import MarianMTModel, MarianTokenizer; MarianMTModel.from_pretrained('Helsinki-NLP/opus-mt-en-ht', cache_dir='$INSTALL_DIR/models/translation'); MarianTokenizer.from_pretrained('Helsinki-NLP/opus-mt-en-ht', cache_dir='$INSTALL_DIR/models/translation')"

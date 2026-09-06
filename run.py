@@ -68,7 +68,9 @@ Examples:
     parser.add_argument("--list-devices", action="store_true",
                         help="List available audio devices")
     parser.add_argument("--parakeet", action="store_true",
-                        help="Use NVIDIA Parakeet via onnx-asr (streaming backend)")
+                        help="Accepted for compatibility and ignored: streaming "
+                             "Parakeet has been the only ASR backend since the "
+                             "Whisper batch path was retired (2026-09-06).")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Enable DEBUG-level logging on console and in log files.")
 
@@ -207,8 +209,6 @@ Examples:
     coordinator = TranslationCoordinator(
         input_device=input_device,
         languages=pipeline_configs,
-        parakeet=args.parakeet,
-        asr_device="cuda",
         input_file=args.input_file,
         input_realtime=not args.no_realtime,
     )

@@ -415,22 +415,13 @@ def run_translator(config: Dict, manager: AudioDeviceManager):
 
     print()
 
-    # Ask about ASR mode
-    print("\nASR Mode:")
-    print("  1. Batch (silence-based chunks, original behaviour)")
-    print("  2. Streaming (rolling re-transcription, better sentence coherence)")
-    mode_choice = get_choice("Select mode", 2)
-    streaming = (mode_choice == 2)
-
-    # GPU is always used — this project requires a ROCm or CUDA GPU.
-    asr_device = "cuda"
-
-    # Create and run coordinator
+    # Streaming Parakeet is the only ASR backend (the Whisper batch mode was
+    # retired 2026-09-06). This call also passed keyword arguments the
+    # coordinator had not accepted for some time, so this menu entry has been
+    # broken since then; the service itself starts through run.py.
     coordinator = TranslationCoordinator(
         input_device=input_device,
         languages=pipeline_configs,
-        streaming=streaming,
-        asr_device=asr_device,
     )
 
     print("Starting translation system...")

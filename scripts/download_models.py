@@ -35,35 +35,12 @@ except ImportError:
     print("Note: Install 'tqdm' for progress bars: pip install tqdm")
 
 
-# Model definitions
-ASR_MODELS = {
-    "tiny.en": {
-        "name": "Whisper Tiny English",
-        "size_mb": 75,
-        "description": "Fastest, lowest accuracy (English only)",
-    },
-    "base.en": {
-        "name": "Whisper Base English",
-        "size_mb": 140,
-        "description": "Fast, good for clear speech (English only)",
-    },
-    "small.en": {
-        "name": "Whisper Small English",
-        "size_mb": 460,
-        "description": "Good balance of speed and accuracy (English only)",
-    },
-    "medium.en": {
-        "name": "Whisper Medium English",
-        "size_mb": 1500,
-        "description": "High accuracy (English only)",
-    },
-    "large-v3": {
-        "name": "Whisper Large V3",
-        "size_mb": 3000,
-        "description": "Highest accuracy, multilingual",
-        "default": True,
-    },
-}
+# Model definitions.
+# ASR is not downloaded here: the streaming Parakeet model is fetched by the
+# NeMo venv on first start (requirements-nemo.txt) and the onnx-asr fallback
+# by scripts/install_parakeet.sh. The Whisper models this list used to hold
+# served the batch path retired on 2026-09-06.
+ASR_MODELS: dict = {}
 
 TRANSLATION_MODELS = {
     "Helsinki-NLP/opus-mt-en-es": {
@@ -183,38 +160,11 @@ def list_models():
 
 
 def download_asr_model(model_id: str, models_dir: Path) -> bool:
-    """Download a Whisper ASR model."""
-    if model_id not in ASR_MODELS:
-        print(f"Unknown ASR model: {model_id}")
-        return False
-
-    info = ASR_MODELS[model_id]
-    print(f"Downloading ASR model: {info['name']} ({format_size(info['size_mb'])})")
-
-    try:
-        from faster_whisper import WhisperModel
-
-        # Download by loading the model
-        download_root = str(models_dir / "asr")
-        os.makedirs(download_root, exist_ok=True)
-
-        # This will download the model if not present
-        model = WhisperModel(
-            model_id,
-            device="cpu",
-            compute_type="int8",
-            download_root=download_root,
-        )
-
-        # Unload model
-        del model
-
-        print(f"  ✓ Downloaded {model_id}")
-        return True
-
-    except Exception as e:
-        print(f"  ✗ Failed to download {model_id}: {e}")
-        return False
+    """ASR models are not downloaded by this script (see ASR_MODELS)."""
+    print(f"ASR model '{model_id}': not handled here — the streaming model downloads "
+          f"on first start from the NeMo venv; the onnx-asr fallback via "
+          f"scripts/install_parakeet.sh")
+    return False
 
 
 def download_translation_model(model_id: str, models_dir: Path) -> bool:

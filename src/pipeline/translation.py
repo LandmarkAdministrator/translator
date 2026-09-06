@@ -1,9 +1,10 @@
 """
 Translation Service
 
-Default: Helsinki-NLP Opus-MT via Transformers (MarianMT), CPU.
-Optional: Meta NLLB-200 via Transformers when NLLB_MODEL env var is set
-(e.g. facebook/nllb-200-distilled-600M / 1.3B / facebook/nllb-200-3.3B).
+Production runs Meta NLLB-200 (NLLB_MODEL is set by scripts/run_production.sh;
+1.3B distilled, fp16, one copy of the weights shared by every language).
+Without NLLB_MODEL the service falls back to Helsinki-NLP Opus-MT (MarianMT)
+on CPU — a lighter option kept for smaller machines, not used at this site.
 """
 
 import os
@@ -13,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import re
+
+from pipeline.text_filters import looks_like_loop
 
 
 # Shared NLLB weights across target languages. NLLB is multilingual — we load
@@ -415,12 +418,10 @@ class TranslationService:
         )
 
         # Filter NLLB / Opus-MT loop-mode outputs ("Mr Mr Mr...", "Eisen Eisen
-        # Eisenh..."). Reuses the same heuristic the ASR layer uses on Whisper
-        # output: content-word dominance OR repeating trigram. Skipped for
-        # very short outputs (where dominance counting is meaningless).
+        # Eisenh..."): content-word dominance OR a repeating trigram. Skipped
+        # for very short outputs (where dominance counting is meaningless).
         if translated_text and len(translated_text.split()) >= 6:
-            from pipeline.asr import WhisperTransformersService
-            if WhisperTransformersService._is_hallucination(translated_text):
+            if looks_like_loop(translated_text):
                 preview = translated_text[:80] + ("..." if len(translated_text) > 80 else "")
                 print(
                     f"  [TRANSLATION HALLUCINATION FILTERED] "
@@ -529,89 +530,3 @@ class TranslationService:
         self.unload()
         return False
 
-
-class MultiTargetTranslator:
-    """
-    Translates to multiple target languages simultaneously.
-
-    Manages multiple TranslationService instances for efficient
-    multi-language translation.
-    """
-
-    def __init__(
-        self,
-        source_language: str = "en",
-        target_languages: List[str] = None,
-        download_root: Optional[str] = None,
-    ):
-        """
-        Initialize the multi-target translator.
-
-        Args:
-            source_language: Source language code
-            target_languages: List of target language codes
-            download_root: Directory for downloaded models
-        """
-        self.source_language = source_language
-        self.target_languages = target_languages or ['es', 'ht']
-
-        self._services = {}
-        self._download_root = download_root
-
-    def load(self) -> None:
-        """Load all translation models."""
-        for target in self.target_languages:
-            if target not in self._services:
-                service = TranslationService(
-                    source_language=self.source_language,
-                    target_language=target,
-                    download_root=self._download_root,
-                )
-                service.load()
-                self._services[target] = service
-
-    def unload(self) -> None:
-        """Unload all models."""
-        for service in self._services.values():
-            service.unload()
-        self._services.clear()
-
-    def translate(self, text: str) -> dict[str, TranslationResult]:
-        """
-        Translate text to all target languages.
-
-        Args:
-            text: Text to translate
-
-        Returns:
-            Dictionary mapping target language to TranslationResult
-        """
-        results = {}
-        for target, service in self._services.items():
-            results[target] = service.translate(text)
-        return results
-
-    def translate_to(self, text: str, target_language: str) -> TranslationResult:
-        """
-        Translate text to a specific target language.
-
-        Args:
-            text: Text to translate
-            target_language: Target language code
-
-        Returns:
-            TranslationResult
-        """
-        if target_language not in self._services:
-            raise ValueError(f"Language {target_language} not loaded")
-        return self._services[target_language].translate(text)
-
-    def __enter__(self):
-        """Context manager entry."""
-        self.load()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        self.unload()
-        return False

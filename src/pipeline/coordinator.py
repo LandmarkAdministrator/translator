@@ -23,7 +23,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from audio.input_stream import AudioInputStream, AudioChunk
 from audio.output_stream import AudioOutputStream, SharedStereoOutput, ChannelOutputProxy
-from pipeline.asr_process import ASRProcess, ASRChunkMeta
 from pipeline.parakeet_asr import ParakeetASRBuffer
 from pipeline.sentence_buffer import SentenceBuffer
 from pipeline.translation import TranslationService, TranslationResult
@@ -59,9 +58,9 @@ class TranslationEvent:
     total_latency: float        # End-to-end: chunk_start → playback_start
     chunk_start_time: float     # When the first audio sample of this chunk arrived
     chunk_duration: float       # Duration of the audio chunk sent to ASR
-    asr_time: float             # Time spent in Whisper transcription
-    translation_time: float     # Time spent in MarianMT translation
-    tts_time: float             # Time spent in Piper TTS synthesis
+    asr_time: float             # Time spent in ASR
+    translation_time: float     # Time spent in translation
+    tts_time: float             # Time spent in TTS synthesis
     queue_depth: int            # Pipeline queue depth when text was submitted
 
 
@@ -295,19 +294,13 @@ class TranslationCoordinator:
         self,
         input_device: str = "default",
         languages: List[PipelineConfig] = None,
-        asr_model: str = "large-v3",
         models_dir: Optional[str] = None,
-        asr_device: str = "cuda",
-        parakeet: bool = False,
         parakeet_model: str = "nemo-parakeet-tdt-0.6b-v3",
         input_file: Optional[str] = None,
         input_realtime: bool = True,
     ):
         self._input_device = input_device
-        self._asr_model = asr_model
-        self._asr_device = asr_device
         self._models_dir = models_dir or str(Path(__file__).parent.parent.parent / "models")
-        self._parakeet = parakeet
         # PARAKEET_MODEL env var overrides the default model id. Lets you
         # swap to e.g. nemo-parakeet-tdt-1.1b without touching code or
         # adding a CLI flag — same pattern as NLLB_MODEL for translation.
@@ -325,10 +318,12 @@ class TranslationCoordinator:
         self._input_file = input_file
         self._input_realtime = input_realtime
         # Sentence buffer sits between Parakeet's token-level commits and the
-        # per-language translation pipelines. Only used in parakeet streaming
-        # mode; batch mode already delivers phrase/sentence-sized Whisper
-        # segments to pipeline.process().
+        # per-language translation pipelines.
         self._sentence_buffer: Optional[SentenceBuffer] = None
+        # Set from the audio thread when the ASR backend is gone for good;
+        # run() then drains what is queued and exits non-zero so systemd
+        # restarts the service.
+        self._fatal: Optional[str] = None
 
         # Default languages if not specified
         if languages is None:
@@ -347,8 +342,6 @@ class TranslationCoordinator:
 
         # Components
         self._audio_input: Optional[AudioInputStream] = None
-        self._asr_proc: Optional[ASRProcess] = None          # batch-mode subprocess
-        self._asr_result_thread: Optional[threading.Thread] = None
         self._pipelines: Dict[str, LanguagePipeline] = {}
         self._shared_outputs: Dict[str, SharedStereoOutput] = {}  # device -> shared output
 
@@ -376,72 +369,57 @@ class TranslationCoordinator:
         print("Loading Translation Coordinator")
         print("=" * 60)
 
-        # Load ASR.
-        #   Parakeet: onnx-asr with token-level LocalAgreement-2, runs through
-        #             _on_audio_chunk_streaming (1.5s chunks).
-        #   Batch:    ASR subprocess (transformers) with its own GIL so the
-        #             audio callback never stalls.
+        # Load ASR: Parakeet streaming — the unified-remote NeMo subprocess in
+        # production, or onnx-asr with token-level LocalAgreement-2 — fed 1.5 s
+        # chunks by _on_audio_chunk_streaming. The Whisper batch path was
+        # retired on 2026-09-06 together with the legacy program it served.
         print("\nLoading ASR service...")
-        if self._parakeet:
-            if self._parakeet_path:
-                print(f"  streaming backend: parakeet (onnx-asr) model={self._parakeet_model} path={self._parakeet_path}")
-            else:
-                print(f"  streaming backend: parakeet (onnx-asr) model={self._parakeet_model}")
-            self._parakeet_buffer = ParakeetASRBuffer(
-                model_name=self._parakeet_model,
-                cache_dir=f"{self._models_dir}/asr/parakeet",
-                model_path=self._parakeet_path,
-            )
-            self._parakeet_buffer.load()
-            # Tunable via env; defaults tuned for a formal speaker cadence.
-            # SENTENCE_BUFFER_OFF=1 disables buffering entirely (fragments go
-            # straight to translation, the old behavior — useful for A/B tests).
-            if os.environ.get("SENTENCE_BUFFER_OFF", "").strip() == "1":
-                self._sentence_buffer = None
-                print("  sentence_buffer: DISABLED (fragments go direct to translate)")
-            else:
-                silence_to = float(os.environ.get("SENTENCE_SILENCE_TIMEOUT", "2.0"))
-                hard_to = float(os.environ.get("SENTENCE_HARD_TIMEOUT", "15.0"))
-                min_words = int(os.environ.get("SENTENCE_MIN_WORDS", "3"))
-                max_chars = int(os.environ.get("SENTENCE_MAX_CHARS", "800"))
-                max_words = int(os.environ.get("SENTENCE_MAX_WORDS", "60"))
-                sil_min_words = int(os.environ.get("SENTENCE_SILENCE_MIN_WORDS", "1"))
-                strip_lead = os.environ.get("SENTENCE_STRIP_LEAD_PUNCT", "1") != "0"
-                # Close sentences on the ASR's own punctuation boundary rather
-                # than on a timer. Measured on 10 min of sermon: sentences
-                # ending properly 18.8% -> 96.0%, segments holding two
-                # sentences 74% -> 5%, content silently dropped by NLLB
-                # 10% -> 0%, and the median actually gets faster.
-                punct_bnd = os.environ.get("SENTENCE_PUNCT_BOUNDARY", "1") != "0"
-                self._sentence_buffer = SentenceBuffer(
-                    silence_timeout=silence_to,
-                    hard_timeout=hard_to,
-                    min_emit_words=min_words,
-                    max_buffer_chars=max_chars,
-                    max_emit_words=max_words,
-                    silence_min_words=sil_min_words,
-                    strip_lead_punct=strip_lead,
-                    punct_boundary=punct_bnd,
-                )
-                print(
-                    f"  sentence_buffer: silence={silence_to}s hard={hard_to}s "
-                    f"min_words={min_words} max_words={max_words} "
-                    f"silence_min_words={sil_min_words} max_chars={max_chars} "
-                    f"punct_boundary={punct_bnd}"
-                )
+        if self._parakeet_path:
+            print(f"  streaming backend: parakeet model={self._parakeet_model} path={self._parakeet_path}")
         else:
-            download_root = (
-                f"{self._models_dir}/asr/transformers"
-                if self._asr_device == "cuda"
-                else f"{self._models_dir}/asr"
+            print(f"  streaming backend: parakeet model={self._parakeet_model}")
+        self._parakeet_buffer = ParakeetASRBuffer(
+            model_name=self._parakeet_model,
+            cache_dir=f"{self._models_dir}/asr/parakeet",
+            model_path=self._parakeet_path,
+        )
+        self._parakeet_buffer.load()
+        # Tunable via env; defaults tuned for a formal speaker cadence.
+        # SENTENCE_BUFFER_OFF=1 disables buffering entirely (fragments go
+        # straight to translation, the old behavior — useful for A/B tests).
+        if os.environ.get("SENTENCE_BUFFER_OFF", "").strip() == "1":
+            self._sentence_buffer = None
+            print("  sentence_buffer: DISABLED (fragments go direct to translate)")
+        else:
+            silence_to = float(os.environ.get("SENTENCE_SILENCE_TIMEOUT", "2.0"))
+            hard_to = float(os.environ.get("SENTENCE_HARD_TIMEOUT", "15.0"))
+            min_words = int(os.environ.get("SENTENCE_MIN_WORDS", "3"))
+            max_chars = int(os.environ.get("SENTENCE_MAX_CHARS", "800"))
+            max_words = int(os.environ.get("SENTENCE_MAX_WORDS", "60"))
+            sil_min_words = int(os.environ.get("SENTENCE_SILENCE_MIN_WORDS", "1"))
+            strip_lead = os.environ.get("SENTENCE_STRIP_LEAD_PUNCT", "1") != "0"
+            # Close sentences on the ASR's own punctuation boundary rather
+            # than on a timer. Measured on 10 min of sermon: sentences
+            # ending properly 18.8% -> 96.0%, segments holding two
+            # sentences 74% -> 5%, content silently dropped by NLLB
+            # 10% -> 0%, and the median actually gets faster.
+            punct_bnd = os.environ.get("SENTENCE_PUNCT_BOUNDARY", "1") != "0"
+            self._sentence_buffer = SentenceBuffer(
+                silence_timeout=silence_to,
+                hard_timeout=hard_to,
+                min_emit_words=min_words,
+                max_buffer_chars=max_chars,
+                max_emit_words=max_words,
+                silence_min_words=sil_min_words,
+                strip_lead_punct=strip_lead,
+                punct_boundary=punct_bnd,
             )
-            self._asr_proc = ASRProcess(
-                model_size=self._asr_model,
-                device=self._asr_device,
-                language="en",
-                download_root=download_root,
+            print(
+                f"  sentence_buffer: silence={silence_to}s hard={hard_to}s "
+                f"min_words={min_words} max_words={max_words} "
+                f"silence_min_words={sil_min_words} max_chars={max_chars} "
+                f"punct_boundary={punct_bnd}"
             )
-            self._asr_proc.start()
 
         # Load language pipelines
         print("\nLoading language pipelines...")
@@ -483,24 +461,18 @@ class TranslationCoordinator:
         # mic-backed for live use.
         print("\nInitializing audio input...")
         if self._input_file:
-            # File mode: same chunk duration as the corresponding mic mode so
-            # downstream behavior (Parakeet rolling buffer, batch chunking)
+            # File mode: same 1.5 s chunks as the mic so downstream behaviour
             # is unchanged. EOF triggers a graceful pipeline drain in run().
             from audio.file_input_stream import FileInputStream
-            chunk_duration = 1.5 if self._parakeet else 7.0
             self._audio_input = FileInputStream(
                 file_path=self._input_file,
                 sample_rate=16000,
-                chunk_duration=chunk_duration,
+                chunk_duration=1.5,
                 realtime=self._input_realtime,
             )
-            if self._parakeet:
-                self._audio_input.add_callback(self._on_audio_chunk_streaming)
-            else:
-                self._audio_input.add_callback(self._on_audio_chunk)
-        elif self._parakeet:
-            # Parakeet streaming: 1.5s chunks, time-sliced (not silence-split).
-            # LocalAgreement-2 at the token level decides commit boundaries.
+        else:
+            # 1.5 s chunks, time-sliced (not silence-split): the ASR decides
+            # commit boundaries, the sentence buffer decides sentence ones.
             self._audio_input = AudioInputStream(
                 device=self._input_device,
                 sample_rate=16000,
@@ -509,25 +481,13 @@ class TranslationCoordinator:
                 silence_threshold=0.02,
                 min_silence_duration=10.0,
             )
-            self._audio_input.add_callback(self._on_audio_chunk_streaming)
-        else:
-            # Batch mode: silence-based chunking.
-            self._audio_input = AudioInputStream(
-                device=self._input_device,
-                sample_rate=16000,
-                target_chunk_duration=7.0,
-                max_chunk_duration=12.0,
-                silence_threshold=0.02,
-                min_silence_duration=0.5,
-            )
-            self._audio_input.add_callback(self._on_audio_chunk)
+        self._audio_input.add_callback(self._on_audio_chunk_streaming)
 
-        mode_str = "streaming (parakeet / onnx-asr)" if self._parakeet else "batch (silence-based)"
         print("\n" + "=" * 60)
         print("Translation Coordinator Ready")
         print(f"  Input device: {self._audio_input.device.name} (index {self._audio_input.device.index})")
         print(f"  Native sample rate: {self._audio_input.native_sample_rate}Hz -> resampled to {self._audio_input.sample_rate}Hz")
-        print(f"  Mode: {mode_str}")
+        print(f"  Mode: streaming ({self._parakeet_model})")
         print(f"  Languages: {', '.join(self._pipelines.keys())}")
         print("=" * 60)
 
@@ -543,10 +503,6 @@ class TranslationCoordinator:
         for shared in self._shared_outputs.values():
             shared.stop()
 
-        if self._asr_proc:
-            self._asr_proc.stop()
-            self._asr_proc = None
-
     def start(self) -> None:
         """Start the translation system."""
         if self._running:
@@ -554,6 +510,13 @@ class TranslationCoordinator:
 
         self._session_start = time.time()
         print("\nStarting translation system...")
+
+        # Accept chunks from the first one: the audio callback drops anything
+        # that arrives before _running is set, and a file input with no pacing
+        # delivers the whole file in the milliseconds the outputs below take
+        # to open — every chunk of a --no-realtime run was lost that way.
+        # (Pipelines queue what arrives before their threads start.)
+        self._running = True
 
         # Start audio capture FIRST (USB devices often need input opened before output)
         self._audio_input.start()
@@ -565,17 +528,6 @@ class TranslationCoordinator:
         # Start language pipelines
         for pipeline in self._pipelines.values():
             pipeline.start()
-
-        # Start ASR result thread (batch mode only — subprocess was started in load())
-        if not self._parakeet and self._asr_proc:
-            self._asr_result_thread = threading.Thread(
-                target=self._asr_result_loop,
-                daemon=True,
-                name="ASRResultLoop",
-            )
-            self._asr_result_thread.start()
-
-        self._running = True
 
         print("Translation system running. Press Ctrl+C to stop.")
         print("\nListening for speech... (dots = audio detected)")
@@ -593,12 +545,6 @@ class TranslationCoordinator:
         if self._audio_input:
             self._audio_input.stop()
 
-        # Join ASR result thread (batch mode) — must happen before stopping pipelines
-        # so any in-flight results still get dispatched
-        if self._asr_result_thread:
-            self._asr_result_thread.join(timeout=5.0)
-            self._asr_result_thread = None
-
         # Stop pipelines
         for pipeline in self._pipelines.values():
             pipeline.stop()
@@ -609,100 +555,6 @@ class TranslationCoordinator:
 
         print("Translation system stopped.")
 
-    def _on_audio_chunk(self, chunk: AudioChunk) -> None:
-        """Handle incoming audio chunk."""
-        if not self._running:
-            return
-
-        try:
-            self._on_audio_chunk_inner(chunk)
-        except Exception as e:
-            logger.error("ASR callback error: {}", e)
-
-    def _on_audio_chunk_inner(self, chunk: AudioChunk) -> None:
-        """Inner handler — exceptions here are caught by _on_audio_chunk."""
-        chunk_duration = chunk.duration
-        queue_depths = {lang: p._queue.qsize() for lang, p in self._pipelines.items()}
-        queue_str = ",".join(f"{l}:{d}" for l, d in queue_depths.items())
-
-        if chunk.emit_reason == "max_duration":
-            self._stats['forced_emits'] += 1
-
-        logger.info(
-            "CHUNK | duration={:.2f}s | emit={} | peak_rms={:.3f} | queues=[{}]",
-            chunk_duration, chunk.emit_reason, chunk.peak_rms, queue_str
-        )
-
-        # Submit to ASR subprocess — non-blocking, audio callback returns immediately.
-        # Results are delivered via _asr_result_loop running in a separate thread.
-        meta = ASRChunkMeta(
-            chunk_start_time=chunk.chunk_start_time,
-            chunk_duration=chunk.duration,
-            emit_reason=chunk.emit_reason,
-            peak_rms=chunk.peak_rms,
-            sample_rate=chunk.sample_rate,
-        )
-        submitted = self._asr_proc.submit(chunk.data, meta)
-        if not submitted:
-            self._stats['dropped'] += 1
-            logger.warning(
-                "DROP | reason=asr_queue_full | duration={:.2f}s | rms={:.3f}",
-                chunk_duration, chunk.peak_rms,
-            )
-
-    def _asr_result_loop(self) -> None:
-        """
-        Background thread: drain ASR subprocess results and dispatch to pipelines.
-
-        Runs for the lifetime of the session.  Exits when _running is False and
-        no further results arrive within one polling interval.
-        """
-        while True:
-            result = self._asr_proc.get_result(timeout=0.2)
-            if result is None:
-                if not self._running:
-                    break
-                continue
-
-            transcription, meta = result
-            asr_time = meta.asr_time
-            chunk_duration = meta.chunk_duration
-
-            if transcription.is_empty:
-                self._stats['silent_chunks'] += 1
-                logger.info(
-                    "SILENT | duration={:.2f}s | asr_time={:.3f}s | rms={:.3f} | emit={}",
-                    chunk_duration, asr_time, meta.peak_rms, meta.emit_reason,
-                )
-                continue
-
-            self._stats['transcriptions'] += 1
-            self._stats['total_asr_time'] += asr_time
-
-            # Translate each Whisper segment individually instead of the joined blob.
-            # Whisper segments are phrase/sentence-level boundaries — far more accurate
-            # than our silence-based chunk boundaries for dispatching to TTS.
-            for seg in transcription.segments:
-                seg_start_wall = (
-                    (meta.chunk_start_time + seg.start)
-                    if meta.chunk_start_time > 0
-                    else 0.0
-                )
-
-                logger.info(
-                    "[EN] {} | chunk={:.2f}s | seg={:.2f}-{:.2f}s | asr={:.3f}s | confidence={:.3f} | lang_prob={:.3f}",
-                    seg.text, chunk_duration, seg.start, seg.end, asr_time,
-                    seg.confidence, transcription.language_probability,
-                )
-
-                for pipeline in self._pipelines.values():
-                    pipeline.process(
-                        seg.text,
-                        chunk_start_time=seg_start_wall,
-                        chunk_duration=seg.duration,
-                        asr_time=asr_time,
-                    )
-
     def _on_audio_chunk_streaming(self, chunk: AudioChunk) -> None:
         """Handle incoming audio in Parakeet streaming mode — feed into rolling buffer."""
         if not self._running:
@@ -712,6 +564,15 @@ class TranslationCoordinator:
             result = self._parakeet_buffer.feed(chunk.data, chunk.chunk_start_time)
         except Exception as e:
             logger.error("Streaming ASR callback error: {}", e)
+            if not self._parakeet_buffer.alive() and not self._fatal:
+                # The ASR backend is gone for good — it stalled and was
+                # killed, or it crashed. Nothing in this process can bring it
+                # back, so hand the restart to systemd (Restart=always, ~45 s
+                # to reload) rather than sit silent until the scheduler's
+                # 900 s watchdog notices. A transient decode error, or a
+                # quiet room, never reaches here: the backend is still alive.
+                self._fatal = f"ASR backend is not running ({e})"
+                logger.error("FATAL | {}", self._fatal)
             return
 
         # Fan new Parakeet fragments into the sentence buffer (or straight
@@ -858,6 +719,14 @@ class TranslationCoordinator:
         try:
             while self._running:
                 time.sleep(0.1)
+                if self._fatal:
+                    # Same drain-and-shutdown path as Ctrl+C, so whatever is
+                    # already queued still reaches the room; then exit.
+                    print("\n" + "-" * 40)
+                    print(f"FATAL: {self._fatal}")
+                    print("Draining pipeline, then exiting for restart.")
+                    print("-" * 40)
+                    raise KeyboardInterrupt()
                 # File-input mode: when the audio file is exhausted, raise
                 # KeyboardInterrupt to take the same drain-and-shutdown path
                 # the live mode uses for Ctrl+C. is_finished() exists only on
@@ -881,7 +750,7 @@ class TranslationCoordinator:
             # Flush any remaining text in the Parakeet streaming buffer
             # first (it may produce one last fragment), then drain the
             # sentence buffer so any in-progress sentence reaches translation.
-            if self._parakeet and self._parakeet_buffer:
+            if self._parakeet_buffer:
                 flush_result = self._parakeet_buffer.flush()
                 if flush_result:
                     text, start_wall, asr_time = flush_result
@@ -939,6 +808,11 @@ class TranslationCoordinator:
                 stats['avg_translation_time'],
                 stats['avg_tts_time'],
             )
+
+        if self._fatal:
+            # Non-zero exit: systemd restarts the unit; the scheduler's
+            # MIN_UPTIME guard leaves the fresh process alone while it loads.
+            raise SystemExit(f"fatal: {self._fatal}")
 
     def __enter__(self):
         """Context manager entry."""

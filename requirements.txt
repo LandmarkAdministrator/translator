@@ -10,13 +10,12 @@ sounddevice>=0.4.6
 soundfile>=0.12.1
 
 # ASR (Speech-to-Text)
-# Note: openai-whisper is NOT needed. faster-whisper replaces it entirely
-# and is faster, smaller, and runs on CPU without CUDA.
-faster-whisper>=1.1.0
+# The streaming ASR lives in a second venv — see requirements-nemo.txt. The
+# onnx-asr fallback is installed by scripts/install_parakeet.sh. (faster-whisper
+# and ctranslate2 served the Whisper batch path, retired 2026-09-06.)
 
 # Translation
 transformers>=4.35.0
-ctranslate2>=4.0.0
 sentencepiece>=0.1.99
 sacremoses>=0.1.1
 protobuf>=3.20.0

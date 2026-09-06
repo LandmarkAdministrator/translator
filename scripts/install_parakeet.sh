@@ -12,7 +12,7 @@
 #   source venv/bin/activate && ./scripts/install_parakeet.sh
 #
 # After a successful install:
-#   python run.py --parakeet
+#   python run.py        # used when PARAKEET_MODEL is not unified-remote
 #
 # Known issue — runs on CPU, not GPU:
 #   The currently-published onnxruntime-rocm wheel (1.22.2.post1) is built
@@ -137,4 +137,4 @@ print('smoke test OK (output on silence):', repr(r))
 
 hdr "Done"
 echo "Run it with:"
-echo "    python run.py --parakeet"
+echo "    python run.py        (used when PARAKEET_MODEL is not unified-remote)"

@@ -22,4 +22,4 @@ echo "  HT TTS: facebook/mms-tts-hat"
 echo "  NLLB_DEVICE=${NLLB_DEVICE:-auto}"
 echo "============================================================"
 
-exec ./venv/bin/python run.py --parakeet "$@"
+exec ./venv/bin/python run.py "$@"

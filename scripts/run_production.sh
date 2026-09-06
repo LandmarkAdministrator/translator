@@ -4,13 +4,18 @@
 # ship it. Sets every environment variable so this is fully reproducible.
 #
 # Stack:
-#   ASR             nemo-parakeet-tdt-0.6b-v3   CPU (onnx-asr default)
+#   ASR             nvidia/parakeet-unified-en-0.6b via the NeMo subprocess
+#                   (PARAKEET_MODEL=unified-remote, set by the service launcher
+#                   ~/bin/start-translate-unified); onnx-asr TDT otherwise
 #   Translation     facebook/nllb-200-distilled-1.3B   CUDA fp16
 #   Spanish TTS     hexgrad/Kokoro-82M voice em_alex   CUDA
 #   Haitian TTS     facebook/mms-tts-hat   CUDA
+#   Russian TTS     facebook/mms-tts-rus   CUDA
 #
-# Sentence buffer between Parakeet and translation: 2 s silence timeout,
-# 10 s hard timeout, min 3 words, max 800 chars.
+# Sentence buffer between the ASR and translation: sentences close on the
+# ASR's own punctuation boundary; the 60-word cap and 15 s hard timeout are
+# safety valves (docs/CHANGES-2026-09-06.md §2). The defaults below ARE the
+# production values, so running this script directly behaves like the service.
 #
 # Usage:
 #   ./scripts/run_production.sh                                      # live mic input
@@ -38,19 +43,24 @@ export HT_TTS="mms"
 export RU_TTS="mms"
 export MMS_DEVICE="cuda"
 
-# ----- Sentence buffer (defaults match the comparison report) ----------------
+# ----- Sentence buffer -------------------------------------------------------
 # Overridable from the environment (the timing sweep and head-to-head runs
 # rely on this; before 2026-09-01 these were hard-coded and silently ignored
-# any override).
-export SENTENCE_SILENCE_TIMEOUT="${SENTENCE_SILENCE_TIMEOUT:-2.0}"
-export SENTENCE_HARD_TIMEOUT="${SENTENCE_HARD_TIMEOUT:-10.0}"
+# any override). Until 2026-09-06 the defaults here were the OLD policy
+# (2 s / 10 s, no cap, no punctuation boundary) while the launcher overrode
+# them, so a direct run of this script did not behave like the service.
+export SENTENCE_SILENCE_TIMEOUT="${SENTENCE_SILENCE_TIMEOUT:-30.0}"
+export SENTENCE_HARD_TIMEOUT="${SENTENCE_HARD_TIMEOUT:-15.0}"
 export SENTENCE_MIN_WORDS="${SENTENCE_MIN_WORDS:-3}"
 export SENTENCE_MAX_CHARS="${SENTENCE_MAX_CHARS:-800}"
+export SENTENCE_MAX_WORDS="${SENTENCE_MAX_WORDS:-60}"
+export SENTENCE_PUNCT_BOUNDARY="${SENTENCE_PUNCT_BOUNDARY:-1}"
 
 # ----- ASR -------------------------------------------------------------------
-# Parakeet 0.6B v3 multilingual TDT — current best streaming-compatible ASR
-# in the onnx-asr library. Default in coordinator unless PARAKEET_MODEL is set.
-# export PARAKEET_MODEL="nemo-parakeet-tdt-0.6b-v3"
+# Production: PARAKEET_MODEL=unified-remote (+ UNIFIED_PYTHON, UNIFIED_BIAS_*),
+# exported by the launcher. Unset, the coordinator loads the onnx-asr TDT
+# model, which needs no second venv — useful on a machine without NeMo.
+# export PARAKEET_MODEL="unified-remote"
 
 # ----- Environment setup -----------------------------------------------------
 # onnxruntime-gpu needs PyTorch's bundled CUDA shared libs on its loader path.
@@ -68,12 +78,12 @@ ESPEAK_DATA="$(./venv/bin/python -c 'import espeakng_loader; print(espeakng_load
 
 echo "============================================================"
 echo "Production pipeline"
-echo "  ASR:         Parakeet TDT 0.6B v3 (CPU)"
+echo "  ASR:         ${PARAKEET_MODEL:-nemo-parakeet-tdt-0.6b-v3 (onnx-asr)}"
 echo "  Translation: $NLLB_MODEL ($NLLB_DEVICE, $NLLB_DTYPE)"
 echo "  Spanish TTS: Kokoro 82M em_alex ($KOKORO_DEVICE)"
 echo "  Haitian TTS: $HT_TTS-tts-hat ($MMS_DEVICE)"
 echo "  Russian TTS: $RU_TTS-tts-rus ($MMS_DEVICE)"
-echo "  Sentence buffer: silence=${SENTENCE_SILENCE_TIMEOUT}s hard=${SENTENCE_HARD_TIMEOUT}s min_words=${SENTENCE_MIN_WORDS}"
+echo "  Sentence buffer: punct_boundary=${SENTENCE_PUNCT_BOUNDARY} max_words=${SENTENCE_MAX_WORDS} hard=${SENTENCE_HARD_TIMEOUT}s silence=${SENTENCE_SILENCE_TIMEOUT}s min_words=${SENTENCE_MIN_WORDS}"
 echo "============================================================"
 
-exec ./venv/bin/python run.py --parakeet "$@"
+exec ./venv/bin/python run.py "$@"
