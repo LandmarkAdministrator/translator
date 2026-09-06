@@ -22,12 +22,11 @@ Complete setup guide for installing the Church Audio Translator on a fresh Debia
 - **CPU:** Modern x86_64 processor (AMD or Intel)
 - **RAM:** 8GB minimum, 16GB recommended
 - **GPU (required):** CPU-only operation is not supported — the translator
-  refuses to start without a ROCm or CUDA GPU.  Real-time transcription with
-  the default `large-v3` Whisper model needs GPU acceleration to keep up.
+  refuses to start without a ROCm or CUDA GPU.  NLLB-200 1.3B (fp16, ≈2.6 GB)
+  and the Parakeet streaming ASR (≈1.5 GB) both run on it.
   - AMD: RDNA2 or newer (RX 6000+, Radeon 680M/780M/890M)
-  - NVIDIA: Maxwell or newer (GTX 900+, RTX series)
-  - Recommended ≥8 GB VRAM for `large-v3`; 4–6 GB VRAM works if you step down
-    to `medium.en` or `small.en` via `--setup`.
+  - NVIDIA: Maxwell or newer (GTX 900+, RTX series); production is an RTX 3060
+  - ≥6 GB VRAM
 - **Audio:** One input device, multiple output devices for different languages
 - **Storage:** 10GB free space for models and dependencies
 
@@ -56,15 +55,24 @@ cd translator
 ./install.sh --rocm               # For AMD GPUs
 ./install.sh --cuda               # For NVIDIA GPUs
 
-# Add --parakeet to also set up the Parakeet TDT 0.6b streaming backend
-# (onnx-asr + onnxruntime-rocm + Parakeet ONNX model).  This is optional —
-# the default Whisper backend is unchanged and still selected at runtime:
-./install.sh --rocm --parakeet    # ROCm + Parakeet streaming backend
+# Add --parakeet to also set up the onnx-asr Parakeet TDT model — the ASR
+# fallback for a machine without the NeMo virtual environment (below):
+./install.sh --rocm --parakeet
 ```
 
-> CPU-only installation is not supported — the batch Whisper path requires
-> a GPU.  The Parakeet streaming backend runs on CPU, but it
-> shares the venv with Whisper/translation/TTS, all of which still need GPU.
+The production ASR (`nvidia/parakeet-unified-en-0.6b`) runs in a second
+virtual environment, because NeMo needs Python 3.11 and its own PyTorch:
+
+```bash
+python3.11 -m venv ~/nemo-venv
+~/nemo-venv/bin/pip install -r requirements-nemo.txt   # frozen from production
+```
+
+`install.sh` does not create it yet. The service launcher
+(`scripts/ops/start-translate-unified`) points the pipeline at it with
+`PARAKEET_MODEL=unified-remote` and `UNIFIED_PYTHON`.
+
+> CPU-only installation is not supported — translation and TTS need a GPU.
 
 The installer will:
 1. Enable required Debian repositories (backports, contrib, non-free)
@@ -73,9 +81,9 @@ The installer will:
 4. Create Python virtual environment
 5. Install Python dependencies with correct GPU backend
    (PyTorch 2.11+rocm7.2 or +cu124, transformers 5.x, huggingface_hub 1.x)
-6. Download ML models (Whisper, Opus-MT, Piper TTS)
+6. Download ML models (NLLB-200, Kokoro, MMS-TTS, Piper)
 7. (If `--parakeet`) install onnxruntime-rocm + onnx-asr and pre-download
-   the Parakeet TDT 0.6b v3 ONNX model
+   the Parakeet TDT 0.6b v3 ONNX model (the no-NeMo fallback)
 8. Set up the systemd service
 
 ---
@@ -171,10 +179,11 @@ pip install -r requirements/base.txt -r requirements/ml.txt
 python scripts/download_models.py --all
 ```
 
-### Step 9 (optional): Install Parakeet Streaming Backend
+### Step 9 (optional): Install the onnx-asr Parakeet fallback
 
-To enable `python run.py --parakeet`, install onnxruntime-rocm, onnx-asr, and
-pre-download the Parakeet TDT 0.6b v3 ONNX model:
+The pipeline uses onnx-asr's Parakeet TDT whenever `PARAKEET_MODEL` is not
+`unified-remote` (that is, without the NeMo venv). To install onnxruntime-rocm,
+onnx-asr, and pre-download the model:
 
 ```bash
 source venv/bin/activate
@@ -288,17 +297,18 @@ python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 
 ---
 
-## Parakeet Streaming Backend (optional)
+## ASR backends
 
-The project ships two ASR backends and you pick one at runtime:
+Both are streaming Parakeet models; `PARAKEET_MODEL` selects one. (The
+Whisper batch backend was retired on 2026-09-06.)
 
-| Flag                       | Backend                                              | Where it runs      |
-|----------------------------|------------------------------------------------------|--------------------|
-| *(default, no flag)*       | Whisper batch (faster-whisper via CTranslate2)       | GPU                |
-| `--parakeet`               | NVIDIA Parakeet TDT 0.6b v3 via onnx-asr             | CPU (see note)     |
+| `PARAKEET_MODEL`                    | Backend                                                  | Where it runs |
+|-------------------------------------|----------------------------------------------------------|---------------|
+| `unified-remote` (production)       | `nvidia/parakeet-unified-en-0.6b` via NeMo, in its own venv | GPU           |
+| *(unset)* `nemo-parakeet-tdt-0.6b-v3` | Parakeet TDT 0.6b v3 via onnx-asr                       | CPU (see note) |
 
-Parakeet is enabled by installing its runtime dependencies separately —
-either during install (`./install.sh --rocm --parakeet`) or later:
+The onnx-asr fallback is installed separately — either during install
+(`./install.sh --rocm --parakeet`) or later:
 
 ```bash
 source venv/bin/activate
@@ -332,8 +342,7 @@ libhipblas.so.2: cannot open shared object file: No such file or directory
 
 This is expected and benign.  On a Ryzen AI 9 HX 370 (Radeon 890M iGPU
 hardware), Parakeet TDT 0.6b v3 hits RTF ≈ 0.06 on CPU — about 16× faster
-than real time — so the batch Whisper path can keep the GPU free for
-MarianMT translation while Parakeet handles ASR on CPU.
+than real time — which leaves the GPU to translation and TTS.
 
 **Do not** create a compatibility symlink `libhipblas.so.3 → libhipblas.so.2`
 — it's a major-version ABI bump and will crash or silently produce wrong

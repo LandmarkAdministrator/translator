@@ -41,7 +41,9 @@ The tested deployment baseline is:
 - ROCm **7.2.2** (Ubuntu Noble packages, installed on Debian 13 Trixie)
 - PyTorch **2.11.0+rocm7.2** (from `download.pytorch.org/whl/rocm7.2`)
 - Python **3.13** (Debian Trixie system Python)
-- onnxruntime-rocm **1.22.2.post1** (only required for `--parakeet`)
+- onnxruntime-rocm **1.22.2.post1** (only for the onnx-asr ASR fallback, `--parakeet`)
+- NeMo venv: Python **3.11**, nemo-toolkit **3.0.0**, torch **2.11.0+cu128**
+  (`requirements-nemo.txt`, frozen from the RTX 3060 host)
 
 ---
 
@@ -138,10 +140,12 @@ cd translator
 ./install.sh --rocm --parakeet
 ```
 
-`--parakeet` is optional and only needed if you plan to run
-`python run.py --parakeet` as the low-latency streaming backend.  It can also
-be installed later by running `./scripts/install_parakeet.sh` from inside the
-project venv.
+`--parakeet` installs the onnx-asr Parakeet TDT model, the ASR fallback used
+when `PARAKEET_MODEL` is not `unified-remote`. Production runs the NeMo model
+from a second venv (`python3.11 -m venv ~/nemo-venv && ~/nemo-venv/bin/pip
+install -r requirements-nemo.txt`); see README.md. The fallback can also be
+installed later by running `./scripts/install_parakeet.sh` inside the project
+venv.
 
 ### Step 4: Configure Audio
 

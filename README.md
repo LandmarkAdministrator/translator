@@ -1,206 +1,206 @@
 # Church Audio Translator
 
-Real-time English speech translation for church services. Audio in, translated audio out — simultaneously to multiple languages.
+Real-time English speech translation for church services. The sound desk's
+feed goes in; Spanish, Haitian Creole and Russian come out — as audio to the
+room and as live text and audio on congregants' phones.
 
-Built for congregations that serve speakers of multiple languages. Runs entirely offline on local hardware after setup, with no subscriptions or cloud services required.
+Built for congregations that serve speakers of several languages. Runs
+entirely on local hardware after the models are downloaded; no subscriptions,
+no cloud services.
 
 ## Features
 
-- **Real-time** — Low-latency English speech translation (speed depends on hardware)
-- **Two ASR backends** — Batched Whisper (default, GPU) or Parakeet TDT (`--parakeet`, CPU) for sub-second streaming updates
-- **Simultaneous** — Multiple languages at once (Spanish + Haitian Creole out of the box)
-- **Stereo channel split** — Two languages on one stereo output (Spanish left / Haitian Creole right)
-- **GPU accelerated** — AMD ROCm 7.2.2 or NVIDIA CUDA **(required for Whisper backends — CPU-only Whisper is not supported)**
-- **Fully offline** — No internet required after initial setup and model download
-- **Headless** — Runs as a systemd service, starts automatically at boot
-- **Open source** — All components are FOSS
+- **Streaming ASR with punctuation** — NVIDIA `parakeet-unified-en-0.6b`
+  (NeMo), decoding as the speaker talks. Sentences are sent to translation on
+  the ASR's own sentence boundaries, not on a timer, so translators see whole
+  thoughts (`docs/CHANGES-2026-09-06.md` §2 has the measurements).
+- **One translation model for every language** — Meta NLLB-200 (1.3B
+  distilled, fp16); the weights are loaded once and shared.
+- **A voice per language** — Kokoro-82M for Spanish, Meta MMS-TTS for Haitian
+  Creole and Russian, Piper as a fallback.
+- **Simultaneous outputs** — two languages on one stereo interface (left /
+  right), further languages on any other output the machine has.
+- **A page for phones** — live English and translated text plus per-language
+  audio over WebSocket, installable as a PWA, always reachable (it shows a
+  standby notice between services). An authenticated admin panel starts and
+  stops translation and edits the schedule and audio routing.
+- **Runs itself** — service windows from `config/schedule.conf`, a scheduler
+  that starts and stops the service and restarts it on a real hang, and a GPU
+  thermal guard.
+- **Context biasing** — a phrase list (`config/bias_phrases.txt`) of Bible
+  books, KJV forms and local names boosts them inside the decoder.
+- **Fully offline** after setup; **open source** throughout.
 
-## How It Works
+## How it works
 
 ```
-Microphone → Whisper ASR → English text
-                              ├─→ Opus-MT (en→es) → Piper TTS → Spanish audio out
-                              └─→ Opus-MT (en→ht) → Piper TTS → Haitian Creole audio out
+mixer feed ─► Parakeet ASR (NeMo subprocess) ─► fragments ─► SentenceBuffer ─► sentences
+                                                                              │
+              ┌───────────────────────────────────────────────────────────────┘
+              ├─► NLLB en→es ─► Kokoro  ─► Behringer left   ┐
+              ├─► NLLB en→ht ─► MMS-TTS ─► Behringer right  ├─► relay ─► web page (text + audio)
+              └─► NLLB en→ru ─► MMS-TTS ─► onboard jack     ┘
 ```
 
-## Hardware Requirements
+Two processes: `translate.service` runs the pipeline during service windows;
+`translate-web.service` serves the page and admin panel all the time and
+receives events from the pipeline over a Unix socket.
 
-| Component | Minimum | Recommended |
-|-----------|---------|-------------|
-| CPU | Modern x86_64 | AMD Ryzen / Intel Core (recent gen) |
-| RAM | 8 GB | 16 GB+ |
-| GPU | **Required** — AMD RDNA2+ (RX 6000+, Radeon 680M/780M/890M) or NVIDIA Maxwell+ (GTX 900+, RTX) | ≥8 GB VRAM for `large-v3` |
-| Storage | 15 GB free | 20 GB free |
-| Audio in | Any microphone | USB audio interface |
-| Audio out | Any speaker | Separate output per language |
+## Hardware
 
-> **GPU is mandatory.**  The translator runs `large-v3` Whisper by default,
-> which is ~3× slower than real time on CPU — unusable for live services.
-> `run.py` refuses to start if no GPU is detected.
+| Component | Minimum | Production |
+|-----------|---------|------------|
+| GPU | CUDA or ROCm, ≥ 6 GB VRAM (NLLB fp16 ≈ 2.6 GB, Parakeet ≈ 1.5 GB) | NVIDIA RTX 3060 |
+| CPU / RAM | Modern x86_64, 16 GB | Ryzen mini PC |
+| Audio in | Any input; a feed from the mixer is far cleaner than a microphone | USB (Behringer UCA202) |
+| Audio out | One stereo output per two languages | Behringer + onboard jack |
+| Storage | 20 GB for models and both virtual environments | |
 
-**Tested on:**
-- AMD Ryzen AI 9 HX 370 + Radeon 890M (ROCm)
-- NVIDIA RTX 3060 (CUDA)
+> **A GPU is required.** `run.py` refuses to start without one.
+
+Tested on an NVIDIA RTX 3060 (CUDA 12.8; production) and an AMD Ryzen AI 9 HX
+370 with Radeon 890M (ROCm; development).
 
 ## Installation
 
-Requires a fresh **Debian 13 (Trixie)** install. The installer handles everything else.
+Debian 13 (Trixie). The installer sets up the main virtual environment,
+drivers and models:
 
 ```bash
 git clone https://github.com/LandmarkAdministrator/translator.git ~/translator
 cd ~/translator
-./install.sh
+./install.sh                       # auto-detects the GPU; or --rocm / --cuda
 ```
 
-The installer auto-detects your GPU. To specify manually:
+The streaming ASR runs in a **second** virtual environment because NeMo needs
+Python 3.11 and its own PyTorch build:
 
 ```bash
-./install.sh --rocm                # AMD GPUs (RX 6000+, Radeon 680M / 780M / 890M)
-./install.sh --cuda                # NVIDIA GPUs (GTX 900+, RTX series)
-./install.sh --rocm --parakeet     # Also install the Parakeet streaming backend
+python3.11 -m venv ~/nemo-venv
+~/nemo-venv/bin/pip install -r requirements-nemo.txt     # pinned from production
 ```
 
-**What the installer does:**
-1. Enables required Debian repositories
-2. Installs GPU drivers (ROCm 7.2.2 or NVIDIA kernel driver)
-3. Creates Python virtual environment
-4. Installs Python dependencies with the correct GPU backend
-5. Downloads ML models (~4 GB)
-6. (Optional, with `--parakeet`) Installs `onnxruntime-rocm` + Parakeet TDT 0.6b v3 ONNX model
-7. Sets up the systemd service
+(`install.sh` does not create this yet; a one-script install is an open
+item.) `./install.sh --parakeet` additionally installs the onnx-asr Parakeet
+TDT model, which the pipeline uses when `PARAKEET_MODEL` is not
+`unified-remote` — a fallback for a machine without the NeMo venv, with lower
+accuracy and no punctuation-driven sentence boundaries.
 
-The Parakeet backend can also be added later by running
-`./scripts/install_parakeet.sh` from inside the activated venv.
+See [docs/SETUP.md](docs/SETUP.md) for the step-by-step guide.
 
-See [docs/SETUP.md](docs/SETUP.md) for the full step-by-step guide and troubleshooting.
-
-## First Run
+## Running
 
 ```bash
-source venv/bin/activate
-
-# Interactive setup — select audio devices, test the pipeline, save config
-python run.py --setup
-
-# Run with saved configuration (batched Whisper on GPU — default)
-python run.py
-
-# Parakeet TDT 0.6b v3 streaming ASR (CPU, ~sub-second commits)
-python run.py --parakeet
-
-# Test GPU and all components
-python run.py --test
-
-# List available audio devices
-python run.py --list-devices
+./scripts/run_production.sh                       # live: sets every env var the stack needs
+./scripts/run_production.sh --input-file x.wav    # the same pipeline over a file (reproducible tests)
+./venv/bin/python run.py --setup                  # pick audio devices and languages
+./venv/bin/python run.py --list-devices
 ```
 
-The default batched Whisper path waits for an utterance to finish before
-translating. `--parakeet` emits partial transcripts in real time with a
-token-level LocalAgreement-2 commit policy.
+`run_production.sh` is what the service runs; its exports (translation model
+and device, one `<CODE>_TTS` backend per language, sentence-buffer policy) are
+the production configuration. In production the launcher
+`scripts/ops/start-translate-unified` wraps it with `PARAKEET_MODEL=unified-remote`,
+the NeMo interpreter, and the biasing phrase list.
 
-## Running as a Service
+Before a service, `./venv/bin/python tests/test_pipeline_config.py` confirms
+every configured language resolves a translation model and a voice, without
+loading anything — the failure it exists for took the whole service down once.
 
-```bash
-# Install and enable the systemd user service
-./scripts/install_service.sh install
+## Running as a service
 
-# Start / stop / status
-systemctl --user start church-translator
-systemctl --user stop church-translator
-systemctl --user status church-translator
+The production units are in `systemd/` and the scripts they run in
+`scripts/ops/`:
 
-# View live logs
-journalctl --user -u church-translator -f
-```
+| Unit | Role |
+|------|------|
+| `translate.service` (user) | the pipeline; `ExecStart` is the launcher above |
+| `translate-web.service` (user) | page + admin panel, always on |
+| `translate-window.timer` (user) | every 5 min: `translate-window-check.sh` starts/stops translation by `config/schedule.conf`, drains the archive backlog first, restarts a hung service, and keeps `ExecStart` pointed at the launcher |
+| `gpu-thermal-guard.service` (user) | stops the backlog at 85 °C, and the service too if it is running |
+| `translate-cert-renew.timer` (system) | daily at 03:20: renews the page's TLS certificate from the internal CA |
 
-The service starts automatically at boot (no login required).
+Logs: `~/translate.log` (the service's stdout, what the scheduler watches),
+`logs/` (loguru), `journalctl --user -u translate-web`.
 
 ## Configuration
 
-Audio devices and enabled languages are configured interactively with `python run.py --setup` and saved to `config/settings.yaml`. Edit that file directly (or re-run `--setup`) to change settings — there is no separate per-language YAML to edit. The ASR model is fixed at `large-v3` and is not configurable.
+| File | Holds | Edited by |
+|------|-------|-----------|
+| `config/settings.yaml` | input device; per language the output device, channel and enabled flag | admin panel, `run.py --setup`, or by hand — comments survive a save |
+| `config/schedule.conf` | service windows and the backlog drain lead time | admin panel or by hand |
+| `config/site.json` | church name, service times, the languages the page offers and their strings | by hand; served to the page as `/config.json` |
+| `config/bias_phrases.txt` | phrases boosted in the decoder | by hand |
+| `scripts/run_production.sh` | models, devices, TTS backend per language, sentence-buffer policy | by hand |
 
-## Adding Languages
+Device names are matched by substring so ALSA card renumbering does not break
+routing. The admin credentials live outside the repo in
+`~/.config/translator/admin.json` (scrypt).
 
-The system supports any language pair that has:
-1. A Helsinki-NLP Opus-MT model on HuggingFace (English → target)
-2. A Piper TTS voice for the target language
+## Adding a language
 
-Adding a new language currently requires a small code change:
-1. Add the Opus-MT model ID to `TranslationService.MODEL_MAP` in [src/pipeline/translation.py](src/pipeline/translation.py).
-2. Add the Piper voice entry to `VOICE_MAP` in [src/pipeline/tts.py](src/pipeline/tts.py).
-3. Add the language to the `all_languages` list in [scripts/setup.py](scripts/setup.py).
-4. Download the models with `python scripts/download_models.py --all`.
-5. Re-run `python run.py --setup` to enable the new language.
+1. NLLB needs a FLORES code in `NLLB_LANG_CODES` (`src/pipeline/translation.py`);
+   the common ones are there.
+2. Pick a voice: an MMS-TTS model id in `MMS_MODELS` (`src/pipeline/tts.py`),
+   then `export XX_TTS="mms"` in `scripts/run_production.sh`. **Without the
+   export the language falls through to Piper, which raises during load and
+   crash-loops the whole service.**
+3. Add the language to `config/settings.yaml` with an output device and
+   channel (or use the admin panel), and to `config/site.json` so the page
+   offers it.
+4. Short phrases ("Amen.", "Let us pray.") bypass NLLB through
+   `src/pipeline/translate_short_dict.py`; add entries reviewed by a speaker.
+5. Run `tests/test_pipeline_config.py`.
 
 ## Performance
 
-| Stage | AMD 890M (ROCm) | NVIDIA RTX 3060 (CUDA) | CPU only |
-|-------|-----------------|------------------------|----------|
-| ASR (2s audio) | ~200ms | ~180ms | ~500ms |
-| Translation | ~50ms | ~40ms | ~160ms |
-| TTS | ~100ms | ~80ms | ~100ms |
-| **End-to-end latency** | **~0.8s** | **~0.7s** | **~2–3s** |
+Measured on the RTX 3060 (2026-09-03 head-to-head against the retired
+Whisper program, same sermon recording): word error rate **2.69 %** vs 3.34 %,
+and about **8 s** from words spoken to translated audio vs 46 s. ASR decode is
+~165 ms per 1.5 s chunk; NLLB ~0.5–0.9 s per sentence; TTS ~0.7 s.
 
-## Project Structure
+## Project structure
 
 ```
 translator/
-├── install.sh                  # Automated installer (--rocm | --cuda | --parakeet)
-├── run.py                      # Main entry point (default batch Whisper | --parakeet)
-├── requirements/
-│   ├── base.txt                # Runtime deps (audio, yaml, librosa, hf hub…)
-│   └── ml.txt                  # ML deps (torch, transformers, faster-whisper…)
-├── config/
-│   └── settings.yaml           # Generated by --setup (devices, languages)
+├── run.py                        # entry point (streaming pipeline)
+├── install.sh                    # installer: drivers, venv, models
+├── requirements.txt              # main venv
+├── requirements-nemo.txt         # NeMo venv (Python 3.11), frozen from production
+├── config/                       # settings.yaml, schedule.conf, site.json, bias_phrases.txt
 ├── src/
-│   ├── audio/                  # Audio input/output with PipeWire/ALSA
-│   ├── config/                 # Settings loader (config/settings.yaml)
-│   ├── pipeline/               # ASR (batched Whisper / Parakeet), translation, TTS
-│   └── utils/                  # GPU setup, logging
+│   ├── audio/                    # capture, resampling, stereo/channel output
+│   ├── pipeline/                 # coordinator, ASR client + NeMo server, sentence buffer,
+│   │                             #   translation, TTS, short-phrase dictionary
+│   ├── web/                      # HTTP/WebSocket server, bus, relay, auth, admin, config API
+│   └── config/, utils/
 ├── scripts/
-│   ├── download_models.py      # Download ML models
-│   ├── install_parakeet.sh     # Parakeet backend installer (onnxruntime-rocm + ONNX model)
-│   ├── install_rocm.sh         # ROCm 7.2.2 installer
-│   ├── install_service.sh      # Systemd service installer
-│   ├── test_gpu.py             # GPU verification
-│   └── env.sh                  # Environment setup (AMD iGPU)
-├── systemd/
-│   └── translator.service      # Service file reference (generated by install_service.sh)
-└── docs/
-    ├── SETUP.md                # Full installation guide
-    └── DEPLOYMENT.md           # Deployment and operations guide
+│   ├── run_production.sh         # the production environment
+│   └── ops/                      # launcher, scheduler, thermal guard, cert renewal
+├── systemd/                      # the production units
+├── tests/                        # unit + smoke tests, capture/replay and evaluation tools
+└── docs/                         # SETUP, DEPLOYMENT, dated change records
 ```
 
-## Dependency Licenses
+## Dependency licences
 
-This project uses the following open-source components:
-
-| Component | License | Notes |
+| Component | Licence | Notes |
 |-----------|---------|-------|
-| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | MIT | Speech recognition |
-| [CTranslate2](https://github.com/OpenNMT/CTranslate2) | MIT | Inference engine |
-| [Helsinki-NLP Opus-MT](https://huggingface.co/Helsinki-NLP) | CC-BY 4.0 | Translation models |
-| [Piper TTS](https://github.com/rhasspy/piper) | MIT | Text-to-speech |
-| [piper-tts](https://github.com/rhasspy/piper) | MIT | Python TTS package |
-| [PyTorch](https://pytorch.org/) | BSD 3-Clause | ML framework |
-| [Transformers](https://github.com/huggingface/transformers) | Apache 2.0 | Model loading |
-| [sounddevice](https://python-sounddevice.readthedocs.io/) | MIT | Audio I/O |
-| [NumPy](https://numpy.org/) | BSD 3-Clause | Array processing |
-| [loguru](https://github.com/Delgan/loguru) | MIT | Logging |
+| [NVIDIA NeMo](https://github.com/NVIDIA/NeMo) | Apache 2.0 | streaming ASR runtime |
+| [parakeet-unified-en-0.6b](https://huggingface.co/nvidia/parakeet-unified-en-0.6b) | CC-BY-4.0 | ASR model |
+| [NLLB-200](https://huggingface.co/facebook/nllb-200-distilled-1.3B) | CC-BY-NC-4.0 | translation model |
+| [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) | Apache 2.0 | Spanish voice |
+| [MMS-TTS](https://huggingface.co/facebook/mms-tts-hat) | CC-BY-NC-4.0 | Creole and Russian voices |
+| [Piper](https://github.com/rhasspy/piper) | MIT | fallback voices |
+| [PyTorch](https://pytorch.org/), [Transformers](https://github.com/huggingface/transformers) | BSD-3 / Apache 2.0 | frameworks |
+| [sounddevice](https://python-sounddevice.readthedocs.io/), [NumPy](https://numpy.org/), [loguru](https://github.com/Delgan/loguru) | MIT / BSD-3 / MIT | |
 
-**Translation model note:** The Helsinki-NLP Opus-MT models are released under CC-BY 4.0, which requires attribution for redistribution. This project does not redistribute the models — they are downloaded directly from HuggingFace during setup.
-
-**GPU drivers:** AMD ROCm is open source (MIT/Apache 2.0). NVIDIA kernel drivers are proprietary but freely available. PyTorch bundles its own CUDA runtime — no separate CUDA toolkit installation is needed.
+The models are downloaded from Hugging Face at setup and are not
+redistributed here. NLLB-200 and MMS-TTS are licensed for non-commercial use.
 
 ## License
 
-This project is released under the [MIT License](LICENSE). You are free to use, modify, and distribute it for any purpose, including commercial use.
+MIT — see [LICENSE](LICENSE). Contributions: [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Acknowledgments
-
-Built for multilingual church congregations. Inspired by the need to include everyone in worship regardless of language.
+Built for multilingual church congregations, so that no one is left out of
+worship for want of a language.
