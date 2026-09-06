@@ -38,6 +38,11 @@ class PipelineConfig:
     language_name: str
     output_device: str = "default"
     output_channel: Optional[int] = None  # 0=left, 1=right, None=both/mono
+    # A language carried only by the web page. The Behringer has two output
+    # channels and they are taken by Spanish and Creole, so a third language
+    # has nowhere to play in the room; without this it would open a stream on
+    # some unrelated device and voice the sermon into an empty jack.
+    web_only: bool = False
     translation_model: Optional[str] = None
     tts_voice: str = "default"
     enabled: bool = True
@@ -111,6 +116,15 @@ class LanguagePipeline:
             download_root=f"{self._models_dir}/tts" if self._models_dir else None,
         )
         self._tts.load()
+
+        # Web-only languages skip room playback entirely; their audio still
+        # reaches phones through the bus.
+        if self.config.web_only:
+            self._audio_output = None
+            self._owns_audio_output = False
+            print(f"Pipeline loaded: {self.config.language_name}")
+            print("  Output: web page only (no room channel available)")
+            return
 
         # Use external audio output if provided, otherwise create our own
         if self._external_audio_output is not None:
@@ -244,7 +258,8 @@ class LanguagePipeline:
         e2e_latency = (playback_start - chunk_start_time) if chunk_start_time > 0 else (playback_start - start_time)
 
         # Play audio
-        self._audio_output.play(speech.audio, sample_rate=speech.sample_rate)
+        if self._audio_output is not None:
+            self._audio_output.play(speech.audio, sample_rate=speech.sample_rate)
 
         # Notify callback with full timing breakdown
         if self._on_translation:
@@ -386,12 +401,18 @@ class TranslationCoordinator:
                 print("  sentence_buffer: DISABLED (fragments go direct to translate)")
             else:
                 silence_to = float(os.environ.get("SENTENCE_SILENCE_TIMEOUT", "2.0"))
-                hard_to = float(os.environ.get("SENTENCE_HARD_TIMEOUT", "10.0"))
+                hard_to = float(os.environ.get("SENTENCE_HARD_TIMEOUT", "15.0"))
                 min_words = int(os.environ.get("SENTENCE_MIN_WORDS", "3"))
                 max_chars = int(os.environ.get("SENTENCE_MAX_CHARS", "800"))
-                max_words = int(os.environ.get("SENTENCE_MAX_WORDS", "40"))
+                max_words = int(os.environ.get("SENTENCE_MAX_WORDS", "60"))
                 sil_min_words = int(os.environ.get("SENTENCE_SILENCE_MIN_WORDS", "1"))
                 strip_lead = os.environ.get("SENTENCE_STRIP_LEAD_PUNCT", "1") != "0"
+                # Close sentences on the ASR's own punctuation boundary rather
+                # than on a timer. Measured on 10 min of sermon: sentences
+                # ending properly 18.8% -> 96.0%, segments holding two
+                # sentences 74% -> 5%, content silently dropped by NLLB
+                # 10% -> 0%, and the median actually gets faster.
+                punct_bnd = os.environ.get("SENTENCE_PUNCT_BOUNDARY", "1") != "0"
                 self._sentence_buffer = SentenceBuffer(
                     silence_timeout=silence_to,
                     hard_timeout=hard_to,
@@ -400,11 +421,13 @@ class TranslationCoordinator:
                     max_emit_words=max_words,
                     silence_min_words=sil_min_words,
                     strip_lead_punct=strip_lead,
+                    punct_boundary=punct_bnd,
                 )
                 print(
                     f"  sentence_buffer: silence={silence_to}s hard={hard_to}s "
                     f"min_words={min_words} max_words={max_words} "
-                    f"silence_min_words={sil_min_words} max_chars={max_chars}"
+                    f"silence_min_words={sil_min_words} max_chars={max_chars} "
+                    f"punct_boundary={punct_bnd}"
                 )
         else:
             download_root = (

@@ -158,7 +158,7 @@ Examples:
             if lang.get("enabled", False):
                 # Get output channel (0=left, 1=right, None=both)
                 output_channel = lang.get("output_channel", None)
-                channel_str = ""
+                channel_str = " [web page only]" if lang.get("web_only") else ""
                 if output_channel is not None:
                     channel_str = f" [{'LEFT' if output_channel == 0 else 'RIGHT'} channel]"
 
@@ -175,6 +175,7 @@ Examples:
                     language_name=lang["name"],
                     output_device=output_device,
                     output_channel=output_channel,
+                    web_only=bool(lang.get("web_only", False)),
                     enabled=True,
                 ))
 
