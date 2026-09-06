@@ -60,7 +60,8 @@ STALL_SECONDS=900          # live log silent this long in-window = hung.
 MIN_UPTIME=300             # never restart a service still loading models
 PLAYBACK_ERR_WINDOW=120
 PLAYBACK_ERR_MIN=2
-DRAIN_MIN=30               # start draining the backlog this long before a window
+DRAIN_MIN=30               # default; overridden by config/schedule.conf
+SCHEDULE_CONF="$HOME/translator/config/schedule.conf"
 mkdir -p "$(dirname "$LOG")"
 log() { echo "[$(date '+%F %T')] $*" >> "$LOG"; }
 
@@ -80,9 +81,37 @@ consider() {  # $1 day, $2 start_min, $3 end_min
   [ "$now_min" -ge "$2" ] && [ "$now_min" -lt "$3" ] && in_live=1
   [ "$now_min" -ge $(( $2 - DRAIN_MIN )) ] && [ "$now_min" -lt "$3" ] && in_drain=1
 }
-consider 7 $((  9*60+15 )) $(( 12*60+45 ))
-consider 7 $(( 18*60+15 )) $(( 21*60+ 0 ))
-consider 3 $(( 17*60+45 )) $(( 21*60+15 ))
+# Windows come from config/schedule.conf so they can be edited from /admin
+# without touching this script. If the file is missing or unreadable the
+# built-in schedule below applies: losing the file must not mean losing every
+# service until someone notices.
+hm2min() { echo $(( 10#${1%%:*} * 60 + 10#${1##*:} )); }
+loaded_windows=0
+if [ -r "$SCHEDULE_CONF" ]; then
+  # drain_min first: consider() uses it, so reading it in the same pass would
+  # apply a stale value to any window listed above it in the file.
+  while read -r kind a _rest; do
+    [ "$kind" = "drain_min" ] || continue
+    case "$a" in ''|*[!0-9]*) ;; *) DRAIN_MIN="$a" ;; esac
+  done < "$SCHEDULE_CONF"
+  while read -r kind a b c _rest; do
+    case "$kind" in
+      window)
+        case "$a" in [1-7]) ;; *) continue ;; esac
+        case "$b" in [0-9][0-9]:[0-9][0-9]) ;; *) continue ;; esac
+        case "$c" in [0-9][0-9]:[0-9][0-9]) ;; *) continue ;; esac
+        consider "$a" "$(hm2min "$b")" "$(hm2min "$c")"
+        loaded_windows=$(( loaded_windows + 1 ))
+        ;;
+    esac
+  done < "$SCHEDULE_CONF"
+fi
+if [ "$loaded_windows" -eq 0 ]; then
+  log "schedule.conf missing or empty -> using built-in windows"
+  consider 7 $((  9*60+15 )) $(( 12*60+45 ))
+  consider 7 $(( 18*60+15 )) $(( 21*60+ 0 ))
+  consider 3 $(( 17*60+45 )) $(( 21*60+15 ))
+fi
 
 # Only count real python worker processes: a plain `pgrep -f` also matches any
 # shell whose command line merely mentions the pattern (an admin ssh command,

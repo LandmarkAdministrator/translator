@@ -217,6 +217,17 @@ button{font:inherit;font-size:14px;padding:9px 14px;border-radius:7px;border:1px
 background:var(--bg);color:var(--ink);cursor:pointer}
 button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
 #msg{font-size:14px;color:var(--good);min-height:1.2em}
+table{width:100%;border-collapse:collapse;font-size:14px;margin-bottom:10px}
+th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;
+color:var(--muted);font-weight:700;padding:4px 6px;border-bottom:1px solid var(--line)}
+td{padding:5px 6px;border-bottom:1px solid var(--line)}
+select,input[type=time],input[type=number]{font:inherit;font-size:14px;padding:5px 7px;
+border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+input[type=number]{width:5rem}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.inl{font-size:13px;color:var(--muted);display:flex;gap:6px;align-items:center}
+button.del{padding:4px 10px;font-size:13px;color:var(--bad);border-color:var(--line)}
+.err{color:var(--bad)}
 .hint{font-size:12.5px;color:var(--muted);margin:10px 0 0}
 #warn{background:var(--warn);color:#fff;border-radius:9px;padding:12px 14px;
 margin-bottom:14px;font-size:14px;font-weight:600}
@@ -235,6 +246,26 @@ margin-bottom:14px;font-size:14px;font-weight:600}
 <p class="hint">Start and Stop pause the automatic schedule so the window
 checker cannot undo them. Use <b>Resume automatic schedule</b> when you are
 done, or services will not start on their own.</p></section>
+<section><h2>Service schedule</h2>
+<table id="wins"><thead><tr><th>Day</th><th>Translation starts</th><th>Ends</th><th></th></tr></thead>
+<tbody></tbody></table>
+<div class="row"><button id="addwin" type="button">Add a window</button>
+<label class="inl">Stop archive work <input id="drain" type="number" min="0" max="180" step="5"> min before</label>
+<button class="primary" id="savesched" type="button">Save schedule</button></div>
+<p class="hint">Translation starts at the window time, not the service time — it
+needs about a minute to load and the room is quiet beforehand. Archive jobs have
+run up to 40 minutes, so a drain shorter than that can leave one competing for
+the GPU during a service.</p></section>
+
+<section><h2>Audio routing</h2>
+<div class="row"><label class="inl">Input <select id="indev"></select></label></div>
+<table id="outs"><thead><tr><th>Language</th><th>Output</th><th>Channel</th><th>On</th></tr></thead>
+<tbody></tbody></table>
+<div class="row"><button class="primary" id="saveaudio" type="button">Save audio routing</button></div>
+<p class="hint">Devices are matched by name, so they survive the card renumbering
+a reboot can cause. A device already in use by translation may not appear in this
+list — its configured name is kept and shown regardless.</p></section>
+
 <section><h2>Recent activity</h2><pre id="recent">…</pre></section>
 <section><h2>Scheduler</h2><pre id="sched">…</pre></section>
 </main><script>
@@ -278,5 +309,95 @@ document.querySelector('.actions').addEventListener('click',function(e){
      setTimeout(refresh,1500);
    }).catch(function(){});
 });
-refresh(); setInterval(refresh,5000);
+// ---- settings: schedule and audio routing --------------------------------
+var DAYS=['','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+var CFG=null;
+function opt(v,label,sel){return '<option value="'+esc(v)+'"'+(sel?' selected':'')+'>'+esc(label)+'</option>';}
+
+function drawSchedule(){
+  var tb=document.querySelector('#wins tbody'), h='';
+  CFG.schedule.windows.forEach(function(w,i){
+    var d=''; for(var n=1;n<=7;n++) d+=opt(n,DAYS[n],n===w.day);
+    h+='<tr data-i="'+i+'"><td><select class="wday">'+d+'</select></td>'+
+       '<td><input class="wstart" type="time" value="'+esc(w.start)+'"></td>'+
+       '<td><input class="wend" type="time" value="'+esc(w.end)+'"></td>'+
+       '<td><button class="del" type="button">Remove</button></td></tr>';
+  });
+  tb.innerHTML=h||'<tr><td colspan="4">No windows — services will never start.</td></tr>';
+  document.getElementById('drain').value=CFG.schedule.drain_min;
+}
+function readSchedule(){
+  var ws=[];
+  document.querySelectorAll('#wins tbody tr[data-i]').forEach(function(tr){
+    ws.push({day:parseInt(tr.querySelector('.wday').value,10),
+             start:tr.querySelector('.wstart').value,
+             end:tr.querySelector('.wend').value});
+  });
+  return {drain_min:parseInt(document.getElementById('drain').value,10)||0, windows:ws};
+}
+function drawAudio(){
+  var outs=CFG.devices.outputs||[], ins=CFG.devices.inputs||[];
+  // A device in use by translation vanishes from enumeration; keep the
+  // configured name in the list so saving does not silently change it.
+  function withCurrent(list,cur){
+    var names=list.map(function(d){return d.name;});
+    if(cur && names.indexOf(cur)<0) return [{name:cur,missing:true}].concat(list);
+    return list;
+  }
+  var iv=CFG.audio.input_device, ih='';
+  withCurrent(ins,iv).forEach(function(d){
+    ih+=opt(d.name,d.name+(d.missing?'  (in use / not detected)':''),d.name===iv);});
+  document.getElementById('indev').innerHTML=ih;
+  var tb=document.querySelector('#outs tbody'), h='';
+  (CFG.audio.languages||[]).forEach(function(l,i){
+    var oh=''; withCurrent(outs,l.output_device).forEach(function(d){
+      oh+=opt(d.name,d.name+(d.missing?'  (in use / not detected)':''),d.name===l.output_device);});
+    var ch=l.output_channel, cs=opt('','Both',ch===null||ch===undefined)+opt('0','Left',ch===0)+opt('1','Right',ch===1);
+    h+='<tr data-code="'+esc(l.code)+'"><td>'+esc(l.name||l.code)+'</td>'+
+       '<td><select class="odev">'+oh+'</select></td>'+
+       '<td><select class="och">'+cs+'</select></td>'+
+       '<td><input class="oen" type="checkbox"'+(l.enabled?' checked':'')+'></td></tr>';
+  });
+  tb.innerHTML=h;
+}
+function readAudio(){
+  var ls=[];
+  document.querySelectorAll('#outs tbody tr[data-code]').forEach(function(tr){
+    var c=tr.querySelector('.och').value;
+    ls.push({code:tr.dataset.code, output_device:tr.querySelector('.odev').value,
+             output_channel:c===''?null:parseInt(c,10),
+             enabled:tr.querySelector('.oen').checked});
+  });
+  return {input_device:document.getElementById('indev').value, languages:ls};
+}
+function loadConfig(){
+  fetch('/admin/api/config',{credentials:'same-origin'}).then(function(r){
+    if(r.status===401){location.href='/admin';return null;} return r.json();
+  }).then(function(d){ if(!d)return; CFG=d; drawSchedule(); drawAudio(); }).catch(function(){});
+}
+function saveConfig(kind,data,btn){
+  var m=document.getElementById('msg'); m.className=''; m.textContent='Saving…';
+  fetch('/admin/api/config',{method:'POST',credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:kind,data:data})})
+   .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+   .then(function(res){
+     m.textContent=res.j.message||''; m.className=res.ok?'':'err';
+     if(res.ok) loadConfig();
+   }).catch(function(){ m.textContent='Could not reach the server.'; m.className='err'; });
+}
+document.getElementById('addwin').addEventListener('click',function(){
+  CFG.schedule=readSchedule();
+  CFG.schedule.windows.push({day:7,start:'09:15',end:'12:45'}); drawSchedule();
+});
+document.querySelector('#wins').addEventListener('click',function(e){
+  if(!e.target.classList.contains('del'))return;
+  var tr=e.target.closest('tr'); CFG.schedule=readSchedule();
+  CFG.schedule.windows.splice(parseInt(tr.dataset.i,10),1); drawSchedule();
+});
+document.getElementById('savesched').addEventListener('click',function(){
+  saveConfig('schedule',readSchedule(),this);});
+document.getElementById('saveaudio').addEventListener('click',function(){
+  saveConfig('audio',readAudio(),this);});
+
+refresh(); setInterval(refresh,5000); loadConfig();
 </script></body></html>"""

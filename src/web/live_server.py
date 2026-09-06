@@ -271,6 +271,46 @@ class LiveServer:
             self._reply(writer, "200 OK" if ok else "400 Bad Request",
                         "application/json",
                         json.dumps({"ok": ok, "message": message}).encode())
+        elif path == "/admin/api/config":
+            # Reading is safe; writing changes when services run and where
+            # audio goes, so it needs a session and a POST like any action.
+            from web import config_api as cfg
+            if method == "POST":
+                try:
+                    payload = json.loads(body or b"{}")
+                except Exception:
+                    payload = {}
+                kind = payload.get("kind")
+                try:
+                    if kind == "schedule":
+                        cfg.write_schedule(payload.get("data") or {})
+                        msg = ("Schedule saved. It takes effect at the next check "
+                               "(within 5 minutes) — no restart needed.")
+                    elif kind == "audio":
+                        cfg.write_audio(payload.get("data") or {})
+                        msg = ("Audio routing saved. It applies the next time "
+                               "translation starts; restart it to apply now.")
+                    else:
+                        raise ValueError("Unknown settings section.")
+                    logger.info("[admin] config {!r} saved from {}", kind, addr)
+                    self._reply(writer, "200 OK", "application/json",
+                                json.dumps({"ok": True, "message": msg}).encode())
+                except ValueError as e:
+                    # Validation failure: the operator's fault, tell them what
+                    # to fix rather than logging an exception.
+                    self._reply(writer, "400 Bad Request", "application/json",
+                                json.dumps({"ok": False, "message": str(e)}).encode())
+                except Exception as e:
+                    logger.error("[admin] config write failed: {}", e)
+                    self._reply(writer, "500 Internal Server Error", "application/json",
+                                json.dumps({"ok": False,
+                                            "message": f"Could not save: {e}"}).encode())
+            else:
+                self._reply(writer, "200 OK", "application/json", json.dumps({
+                    "schedule": cfg.read_schedule(),
+                    "audio": cfg.read_audio(),
+                    "devices": cfg.list_audio_devices(),
+                }).encode())
         else:
             self._reply(writer, "200 OK", "text/html; charset=utf-8",
                         adminui.ADMIN_PAGE.encode())
