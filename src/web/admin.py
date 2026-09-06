@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import shutil
 import subprocess
 import time
 from pathlib import Path
+from typing import Optional
 
 COOKIE = "tr_admin"
 
@@ -29,7 +31,8 @@ def gather_status() -> dict:
     st: dict = {"generated": time.strftime("%Y-%m-%d %H:%M:%S")}
 
     st["service"] = _run(["systemctl", "--user", "is-active", "translate.service"]) or "unknown"
-    st["engine"] = "unified streaming (parakeet-unified-en-0.6b)"
+    st["engine"] = running_program()
+    st["legacy_override"] = LEGACY_FLAG.exists()
 
     if shutil.which("nvidia-smi"):
         gpu = _run(["nvidia-smi",
@@ -71,6 +74,53 @@ def gather_status() -> dict:
 
 
 OVERRIDE_FLAG = Path.home() / "translate-manual.flag"
+LEGACY_FLAG = Path.home() / "translate-use-legacy.flag"
+UNIT = Path.home() / ".config" / "systemd" / "user" / "translate.service"
+WANT_EXEC = str(Path.home() / "bin" / "start-translate-unified")
+
+
+def running_program() -> str:
+    """The program the service would actually launch, read from the unit.
+
+    Reported rather than assumed: the panel used to hard-code "unified
+    streaming" and would have claimed it while the legacy translate.py was
+    running, which is exactly the situation an operator needs to see.
+    """
+    exe = _run(["systemctl", "--user", "show", "translate.service",
+                "-p", "ExecStart", "--value"])
+    m = re.search(r"path=([^ ;]+)", exe or "")
+    path = m.group(1) if m else ""
+    if path.endswith("start-translate-unified"):
+        return "unified streaming (parakeet-unified-en-0.6b)"
+    if path:
+        return f"LEGACY translate.py  [{Path(path).name}]"
+    return "unknown"
+
+
+def _ensure_program() -> Optional[str]:
+    """Point the unit at the unified launcher before starting it.
+
+    The scheduler enforces this every five minutes, but a button press is not
+    the scheduler: without this, Start would happily launch whatever the unit
+    last pointed at. Honours ~/translate-use-legacy.flag for a deliberate
+    fallback."""
+    if LEGACY_FLAG.exists():
+        return None
+    exe = _run(["systemctl", "--user", "show", "translate.service",
+                "-p", "ExecStart", "--value"])
+    if WANT_EXEC in (exe or ""):
+        return None
+    try:
+        text = UNIT.read_text()
+        fixed = re.sub(r"^ExecStart=.*$", "ExecStart=%h/bin/start-translate-unified",
+                       text, count=1, flags=re.M)
+        if fixed != text:
+            UNIT.write_text(fixed)
+            subprocess.run(["systemctl", "--user", "daemon-reload"], timeout=10)
+            return "corrected the service to the unified program first"
+    except Exception as e:
+        return f"could not correct the program ({e})"
+    return None
 
 
 def do_action(name: str) -> tuple[bool, str]:
@@ -84,16 +134,20 @@ def do_action(name: str) -> tuple[bool, str]:
     which is why the page warns about it.
     """
     if name == "start":
+        note = _ensure_program()
         try:
             OVERRIDE_FLAG.touch()
         except Exception as e:
             return False, f"Could not pause the schedule: {e}"
         subprocess.Popen(["systemctl", "--user", "start", "translate.service"])
-        return True, ("Starting translation (takes ~40s to load models). The "
-                      "automatic schedule is PAUSED until you resume it.")
+        msg = ("Starting translation (takes ~40s to load models). The "
+               "automatic schedule is PAUSED until you resume it.")
+        return True, (msg + " — " + note) if note else msg
     if name == "restart":
+        note = _ensure_program()
         subprocess.Popen(["systemctl", "--user", "restart", "translate.service"])
-        return True, "Restarting translation — this page will reconnect shortly."
+        msg = "Restarting translation — this page will reconnect shortly."
+        return True, (msg + " — " + note) if note else msg
     if name == "stop":
         try:
             OVERRIDE_FLAG.touch()
@@ -202,12 +256,16 @@ function refresh(){
     if(d.sentences_seen!==undefined)t+=tile('Sentences',esc(d.sentences_seen));
     if(d.errors_seen!==undefined)t+=tile('Errors',esc(d.errors_seen),d.errors_seen>0?'bad':'good');
     t+=tile('Schedule',d.manual_override?'PAUSED':'automatic',d.manual_override?'warn':'good');
+    var legacy=(d.engine||'').indexOf('LEGACY')>=0;
+    t+=tile('Program',legacy?'LEGACY':'unified',legacy?'bad':'good');
     document.getElementById('tiles').innerHTML=t;
     var w=document.getElementById('warn');
-    w.hidden=!d.manual_override;
-    if(d.manual_override)w.textContent=
-      '⚠ The automatic schedule is PAUSED. Translation will NOT start by '+
-      'itself for the next service. Press "Resume automatic schedule" when done.';
+    var warn='';
+    if(legacy)warn='⚠ Running the LEGACY program. The congregation page will show '+
+      '"no service in progress" even while audio plays. Press Restart to switch back.';
+    else if(d.manual_override)warn='⚠ The automatic schedule is PAUSED. Translation will NOT '+
+      'start by itself for the next service. Press "Resume automatic schedule" when done.';
+    w.hidden=!warn; if(warn)w.textContent=warn;
     document.getElementById('recent').textContent=(d.recent||['(nothing yet)']).join('\\n');
     document.getElementById('sched').textContent=(d.scheduler||['(no entries)']).join('\\n');
   }).catch(function(){});
