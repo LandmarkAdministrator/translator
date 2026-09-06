@@ -15,6 +15,9 @@ Environment=WEB_TLS_PORT=8443
 Environment=WEB_TLS_CERT=/etc/translate-tls/tls.crt
 Environment=WEB_TLS_KEY=/etc/translate-tls/tls.key
 Environment=WEB_RELAY_SOCKET=%t/translate-web.sock
+# The Caddy gateway that fronts the page. Only its X-Forwarded-For is believed
+# (for login lockout by real client address); see src/web/auth.py.
+Environment=TRANSLATOR_TRUSTED_PROXIES=10.1.170.204,127.0.0.1,::1
 ExecStart=%h/translator/venv/bin/python %h/translator/scripts/run_web.py
 Restart=always
 RestartSec=5

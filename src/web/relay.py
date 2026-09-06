@@ -77,8 +77,10 @@ class RelayPublisher:
         try:
             self._q.put_nowait((event, binary))
         except queue.Full:
-            # Shed the oldest item so fresh text still gets through; if that
-            # races with the sender we simply drop this one.
+            # Shed the oldest item to make room. The policy is age, not kind:
+            # audio is the bulk of the traffic, so the oldest item is almost
+            # always an audio frame and text tends to survive, but nothing
+            # guarantees it. If this races with the sender we drop this one.
             try:
                 self._q.get_nowait()
                 self._q.put_nowait((event, binary))

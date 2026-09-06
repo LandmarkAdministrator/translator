@@ -23,6 +23,7 @@ import hmac
 import json
 import os
 import secrets
+import sys
 import time
 from pathlib import Path
 from typing import Optional
@@ -34,6 +35,7 @@ CRED_PATH = Path(os.environ.get(
 SESSION_TTL = 8 * 3600        # a login lasts a service, not forever
 MAX_FAILURES = 5              # per address before lockout
 LOCKOUT_BASE = 30             # seconds, doubling per further failure
+FAILURE_MEMORY = 24 * 3600    # forget an address this long after its last failure
 SCRYPT = dict(n=2 ** 14, r=8, p=1, dklen=32)
 
 
@@ -86,12 +88,20 @@ class Sessions:
         return max(0.0, until - time.time())
 
     def record_failure(self, addr: str) -> None:
+        now = time.time()
+        # Forget addresses whose last failure is long past, or the table grows
+        # by one entry per scanner for the life of the process. `until` is the
+        # last failure's time plus its lockout, so it doubles as last-seen;
+        # escalation still holds across any lockout shorter than a day.
+        for a in [a for a, (_, until) in self._failures.items()
+                  if until < now - FAILURE_MEMORY]:
+            self._failures.pop(a, None)
         count, _ = self._failures.get(addr, (0, 0.0))
         count += 1
         delay = 0.0
         if count >= MAX_FAILURES:
             delay = LOCKOUT_BASE * (2 ** (count - MAX_FAILURES))
-        self._failures[addr] = (count, time.time() + delay)
+        self._failures[addr] = (count, now + delay)
 
     def clear_failures(self, addr: str) -> None:
         self._failures.pop(addr, None)
@@ -129,12 +139,20 @@ def parse_cookies(header: str) -> dict:
 
 
 # Reverse proxies whose X-Forwarded-For we believe. Anything else reaching the
-# TLS port directly is treated as the client itself.
+# TLS port directly is treated as the client itself. The proxy's address is
+# site-specific, so it comes from the environment — systemd/translate-web.service
+# sets it for production; the default trusts only loopback.
 TRUSTED_PROXIES = {
     a.strip() for a in os.environ.get(
-        "TRANSLATOR_TRUSTED_PROXIES", "10.1.170.204,127.0.0.1,::1").split(",")
+        "TRANSLATOR_TRUSTED_PROXIES", "127.0.0.1,::1").split(",")
     if a.strip()
 }
+if "TRANSLATOR_TRUSTED_PROXIES" not in os.environ:
+    # Behind a proxy this is a real degradation: every visitor arrives from the
+    # proxy's address, so one person's failed logins lock everyone out.
+    print("[auth] TRANSLATOR_TRUSTED_PROXIES is not set: X-Forwarded-For will be "
+          "ignored and all visitors behind a reverse proxy share one lockout counter",
+          file=sys.stderr)
 
 
 def client_address(headers: dict, peer: str) -> str:

@@ -98,9 +98,16 @@ def main():
     assert expect in resp, "bad accept key"
     print("WS handshake: OK")
 
-    # 4) ring replay
+    # 4) ring replay. A `status` event (live/standby) comes first — the server
+    #    has announced it on connect since it became an always-on unit
+    #    (2026-09-04); the replayed sentence follows it.
     op, payload = read_server_frame(s)
     ev = json.loads(payload)
+    if ev.get("kind") == "status":
+        assert op == wsproto.OP_TEXT and ev.get("live") is False, ev
+        print(f"status event first: OK (live={ev['live']})")
+        op, payload = read_server_frame(s)
+        ev = json.loads(payload)
     assert op == wsproto.OP_TEXT and ev["kind"] == "en.sentence" and ev.get("replay"), ev
     print("ring replay: OK")
 

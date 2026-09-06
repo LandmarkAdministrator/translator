@@ -180,7 +180,8 @@ def write_audio(data: dict) -> None:
     if err:
         raise ValueError(err)
     import yaml
-    raw = yaml.safe_load(SETTINGS.read_text()) or {}
+    text = SETTINGS.read_text()
+    raw = yaml.safe_load(text) or {}
     raw["input_device"] = data["input_device"]
     by_code = {l["code"]: l for l in data["languages"]}
     for l in raw.get("languages", []):
@@ -189,7 +190,50 @@ def write_audio(data: dict) -> None:
             l["output_device"] = upd["output_device"]
             l["output_channel"] = upd["output_channel"]
             l["enabled"] = bool(upd["enabled"])
-    _atomic_write(SETTINGS, yaml.safe_dump(raw, sort_keys=False, allow_unicode=True))
+    # Edit values in place so the file's comments survive: the routing notes
+    # (why Russian is on the onboard jack, why devices are matched by name)
+    # live between the entries, and yaml.safe_dump would erase them. The
+    # patched text must load back to exactly what we meant to write; if it
+    # does not — an unfamiliar layout — fall back to a clean dump.
+    patched = _patch_yaml_values(text, raw)
+    if patched is None or yaml.safe_load(patched) != raw:
+        patched = yaml.safe_dump(raw, sort_keys=False, allow_unicode=True)
+    _atomic_write(SETTINGS, patched)
+
+
+_TOP_KEY = re.compile(r"^(input_device):\s*(.*?)\s*$")
+_ENTRY = re.compile(r"^(\s*)-\s+code:\s*(\S+)\s*$")
+_FIELD = re.compile(r"^(\s+)(output_device|output_channel|enabled):\s*(.*?)\s*$")
+
+
+def _patch_yaml_values(text: str, raw: dict) -> Optional[str]:
+    """Rewrite just the values write_audio changes, line by line, keeping every
+    other line (comments included) byte for byte. Understands the one layout
+    settings.yaml has always had — a flat mapping with a `languages` list whose
+    items start `- code: xx` — and returns None for anything else."""
+    import json
+    langs = {l.get("code"): l for l in raw.get("languages", [])}
+    out, code = [], None
+    for line in text.splitlines():
+        m = _TOP_KEY.match(line)
+        if m:
+            code = None
+            out.append(f"input_device: {json.dumps(raw['input_device'], ensure_ascii=False)}")
+            continue
+        m = _ENTRY.match(line)
+        if m:
+            code = m.group(2).strip("'\"")
+            out.append(line)
+            continue
+        m = _FIELD.match(line) if code in langs else None
+        if m:
+            value = langs[code][m.group(2)]
+            out.append(f"{m.group(1)}{m.group(2)}: {json.dumps(value, ensure_ascii=False)}")
+            continue
+        if line and not line[0].isspace() and not line.startswith("#") and not line.startswith("-"):
+            code = None            # another top-level key ends the list
+        out.append(line)
+    return "\n".join(out) + "\n"
 
 
 def _atomic_write(path: Path, text: str) -> None:
