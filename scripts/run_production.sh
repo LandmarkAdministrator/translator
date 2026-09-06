@@ -31,6 +31,11 @@ export NLLB_DTYPE="fp16"
 export ES_TTS="kokoro"
 export KOKORO_DEVICE="cuda"
 export HT_TTS="mms"
+# Russian uses MMS too. Without this it falls through to the Piper backend,
+# which has no Russian voice, and the whole service dies in a restart loop:
+#   ValueError: No voice found for language 'ru'. Available: ['ht','es','fr','en']
+# Any language added here needs its backend named the same way.
+export RU_TTS="mms"
 export MMS_DEVICE="cuda"
 
 # ----- Sentence buffer (defaults match the comparison report) ----------------
@@ -67,6 +72,7 @@ echo "  ASR:         Parakeet TDT 0.6B v3 (CPU)"
 echo "  Translation: $NLLB_MODEL ($NLLB_DEVICE, $NLLB_DTYPE)"
 echo "  Spanish TTS: Kokoro 82M em_alex ($KOKORO_DEVICE)"
 echo "  Haitian TTS: $HT_TTS-tts-hat ($MMS_DEVICE)"
+echo "  Russian TTS: $RU_TTS-tts-rus ($MMS_DEVICE)"
 echo "  Sentence buffer: silence=${SENTENCE_SILENCE_TIMEOUT}s hard=${SENTENCE_HARD_TIMEOUT}s min_words=${SENTENCE_MIN_WORDS}"
 echo "============================================================"
 
