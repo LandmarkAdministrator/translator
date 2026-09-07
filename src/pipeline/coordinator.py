@@ -29,6 +29,14 @@ from pipeline.translation import TranslationService, TranslationResult
 from pipeline.tts import TTSService, SpeechResult
 from web.bus import BUS as WEB_BUS
 
+# A HEARTBEAT line this often, from the audio path, whether or not anyone is
+# speaking. The scheduler's stall watchdog reads the log's mtime: without a
+# heartbeat, a quiet room looked exactly like a hung pipeline, and 15 minutes
+# of post-service silence restarted a healthy service (2026-09-06 20:30, and
+# the pre-service silence that morning). With it, the watchdog measures the
+# process — no chunks reaching this code means the audio thread is stuck.
+HEARTBEAT_SEC = float(os.environ.get("PIPELINE_HEARTBEAT_SEC", "60"))
+
 
 @dataclass
 class PipelineConfig:
@@ -324,6 +332,8 @@ class TranslationCoordinator:
         # run() then drains what is queued and exits non-zero so systemd
         # restarts the service.
         self._fatal: Optional[str] = None
+        self._chunks_seen = 0
+        self._last_heartbeat = 0.0
 
         # Default languages if not specified
         if languages is None:
@@ -559,6 +569,17 @@ class TranslationCoordinator:
         """Handle incoming audio in Parakeet streaming mode — feed into rolling buffer."""
         if not self._running:
             return
+
+        self._chunks_seen += 1
+        now = time.monotonic()
+        if now - self._last_heartbeat >= HEARTBEAT_SEC:
+            self._last_heartbeat = now
+            logger.info(
+                "HEARTBEAT | chunks={} | fragments={} | asr_alive={} | queues=[{}]",
+                self._chunks_seen, self._stats['transcriptions'],
+                self._parakeet_buffer.alive(),
+                ",".join(f"{l}:{p._queue.qsize()}" for l, p in self._pipelines.items()),
+            )
 
         try:
             result = self._parakeet_buffer.feed(chunk.data, chunk.chunk_start_time)

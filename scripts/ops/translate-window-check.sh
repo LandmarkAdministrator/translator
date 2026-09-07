@@ -53,10 +53,16 @@ TRANSLATE_LOG="$HOME/translate.log"
 WORKER_START="$HOME/Multi-Bitrate-Sermons/scripts/lbc-start-unified-worker.sh"
 STOP_FLAG="$HOME/Multi-Bitrate-Sermons/stop.flag"
 WORKER_PAT="Multi-Bitrate-Sermons/.venv/bin/python.*worker"
-STALL_SECONDS=900          # live log silent this long in-window = hung.
-                           # The unified stack is silent when the room is,
-                           # and the window opens 45 min before the service,
-                           # so 180s produced a restart loop (2026-09-06).
+STALL_SECONDS=300          # live log silent this long in-window = hung.
+                           # The pipeline writes a HEARTBEAT line every 60 s
+                           # from its audio path whether or not anyone is
+                           # speaking, so this measures the process, not the
+                           # room: five missed heartbeats is a hang. Before
+                           # the heartbeat, silence and a hang were the same
+                           # thing to this check — 180 s restart-looped on
+                           # pre-service silence and even 900 s restarted a
+                           # healthy service after the evening service ended
+                           # (2026-09-06, 09:20 and 20:30).
 MIN_UPTIME=300             # never restart a service still loading models
 PLAYBACK_ERR_WINDOW=120
 PLAYBACK_ERR_MIN=2
