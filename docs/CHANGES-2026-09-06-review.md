@@ -1,4 +1,4 @@
-# 2026-09-06 (evening) — code review follow-up: staged, not deployed
+# 2026-09-06 (evening) — code review follow-up (deployed 2026-09-07)
 
 A full read of the production path after the day's work, the decisions taken
 on each finding, and what changed. **Deployed to the production host on
