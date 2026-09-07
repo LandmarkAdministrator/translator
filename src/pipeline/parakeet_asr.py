@@ -13,14 +13,16 @@ Fed by the coordinator's streaming audio callback (1.5s chunks); emits
 
 from __future__ import annotations
 
-import logging
 import time
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
-logger = logging.getLogger(__name__)
+# loguru, like the rest of the pipeline: stdlib logging was never routed
+# anywhere, so this module's messages — including the one that says the
+# ASR server was killed for stalling — did not reach the service log.
+from loguru import logger
 
 SAMPLE_RATE = 16000
 
@@ -100,6 +102,7 @@ class _RemoteUnifiedModel:
         if not msg.get("ready"):
             raise RuntimeError(f"unified ASR server failed to start: {msg}")
         self.protocol = int(msg.get("protocol", 1))
+        logger.info("unified ASR server ready: protocol {} ({})", self.protocol, self._python)
 
     def alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
@@ -117,7 +120,7 @@ class _RemoteUnifiedModel:
         while b"\n" not in self._rbuf:
             remaining = deadline - time.monotonic()
             if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
-                logger.error("unified ASR server: no reply in %.0fs — killing it", timeout)
+                logger.error("unified ASR server: no reply in {:.0f}s — killing it", timeout)
                 self.stop()
                 raise RuntimeError(f"unified ASR server stalled (no reply in {timeout:.0f}s)")
             chunk = os.read(fd, 1 << 16)
@@ -265,7 +268,7 @@ class ParakeetASRBuffer:
             remote = _RemoteUnifiedModel()
             remote.start()
             self._model = remote
-            logger.info("Parakeet loaded: unified-remote (parakeet-unified-en-0.6b, server=%s)",
+            logger.info("Parakeet loaded: unified-remote (parakeet-unified-en-0.6b, server={})",
                         remote._python)
             return
 
@@ -298,7 +301,7 @@ class ParakeetASRBuffer:
             if want == "cuda" and "CUDAExecutionProvider" in avail:
                 providers.append("CUDAExecutionProvider")
             elif want == "cuda":
-                logger.warning("PARAKEET_DEVICE=cuda but CUDAExecutionProvider is not available (%s); using CPU", avail)
+                logger.warning("PARAKEET_DEVICE=cuda but CUDAExecutionProvider is not available ({}); using CPU", avail)
             if "ROCMExecutionProvider" in avail:
                 providers.append("ROCMExecutionProvider")
             providers.append("CPUExecutionProvider")
@@ -315,7 +318,7 @@ class ParakeetASRBuffer:
         # timestamps for buffer trimming and commit-boundary reporting.
         self._model = base.with_timestamps()
         logger.info(
-            "Parakeet loaded: model=%s%s providers=%s",
+            "Parakeet loaded: model={}{} providers={}",
             self._model_name,
             f" path={self._model_path}" if self._model_path else "",
             providers,
@@ -468,7 +471,7 @@ class ParakeetASRBuffer:
         first = float(times[0]) if times else 0.0
         self._committed_count += len(toks)
         if result.count != self._committed_count:
-            logger.warning("unified ASR: token count drifted (server %s, client %s); resyncing",
+            logger.warning("unified ASR: token count drifted (server {}, client {}); resyncing",
                            result.count, self._committed_count)
             self._committed_count = int(result.count)
         return toks, first
@@ -572,7 +575,7 @@ class ParakeetASRBuffer:
         self._prev_ends = []
         self._committed_count = 0
         logger.warning(
-            "parakeet: dropped %.1fs of audio that never stabilized "
-            "(buffer hit %.1fs; kept last %.1fs) — that speech is lost",
+            "parakeet: dropped {:.1f}s of audio that never stabilized "
+            "(buffer hit {:.1f}s; kept last {:.1f}s) — that speech is lost",
             drop, buffer_sec, TRIM_KEEP_SEC,
         )
