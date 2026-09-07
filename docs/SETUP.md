@@ -40,6 +40,28 @@ Complete setup guide for installing the Church Audio Translator on a fresh Debia
 
 ## Quick Install
 
+The install is two scripts. `./install.sh` handles the operating system: GPU
+drivers, the main virtual environment, base models. `scripts/install_site.sh`
+handles the site: the NeMo virtual environment for the streaming ASR, the
+configuration files, the admin password, the scheduler and every systemd
+unit, optionally TLS from an internal CA and a model prefetch. `install.sh`
+calls it at the end; run it again by itself after any `git pull` — it is
+idempotent and reports each step as ok / changed / skipped / FAILED, and
+`--check` reports without changing anything.
+
+```bash
+./install.sh --cuda                                   # or --rocm; then, or later:
+./scripts/install_site.sh --check                     # what is missing
+./scripts/install_site.sh --web-host 0.0.0.0          # LAN page without a proxy
+./scripts/install_site.sh --tls https://ca.example/acme/directory \
+    --ca-cert root.crt --domain translate.example.org --email admin@example.org
+./scripts/install_site.sh --prefetch                  # download all models now
+```
+
+Afterwards: sign in to `/admin`, set the audio devices and service windows,
+and edit `config/site.json` (church name, service times, languages).
+
+
 For a fully automated installation on Debian 13:
 
 ```bash

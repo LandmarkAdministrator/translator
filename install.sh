@@ -964,7 +964,7 @@ Options:
   --parakeet      Also install onnx-asr + Parakeet ONNX model (streaming backend)
   --dir PATH      Install to specified directory (default: repo directory)
   --skip-models   Skip downloading AI models
-  --skip-service  Skip systemd service installation
+  --skip-service  Skip the site layer (scripts/install_site.sh: NeMo venv, units, config)
   --yes           Non-interactive: accept all defaults (use with sudo)
   --help          Show this help message
 
@@ -1108,29 +1108,29 @@ main() {
 
     create_launcher_scripts
 
-    if [[ "$SKIP_SERVICE" != "true" ]]; then
-        install_systemd_service
-    fi
-
     verify_installation
+
+    # The site layer — NeMo venv, config, admin password, scheduler, units —
+    # is its own idempotent script so it can be rerun after every git pull.
+    if [[ "$SKIP_SERVICE" != "true" ]]; then
+        header "Site setup"
+        if [[ "$YES" == "true" ]]; then
+            "$INSTALL_DIR/scripts/install_site.sh" --yes || warn "site setup reported problems — rerun scripts/install_site.sh"
+        else
+            "$INSTALL_DIR/scripts/install_site.sh" || warn "site setup reported problems — rerun scripts/install_site.sh"
+        fi
+    fi
 
     # Final messages
     header "Installation Complete!"
 
-    echo "To run the translator:"
-    echo "  $INSTALL_DIR/translator                # default (batch Whisper)"
-    if [[ "$INSTALL_PARAKEET" == "true" ]]; then
-        echo "  $INSTALL_DIR/translator --parakeet     # Parakeet TDT 0.6b (ONNX, streaming)"
-    fi
+    echo "The service starts itself inside the windows in config/schedule.conf."
+    echo "Configure audio devices and windows from the admin panel (see the"
+    echo "site setup summary above), or run the pipeline by hand:"
+    echo "  $INSTALL_DIR/scripts/run_production.sh"
     echo ""
-    echo "To configure audio devices:"
-    echo "  $INSTALL_DIR/translator-setup"
+    echo "Rerun scripts/install_site.sh after any git pull; it changes only what differs."
     echo ""
-    if [[ "$INSTALL_PARAKEET" != "true" ]]; then
-        echo "To enable the Parakeet streaming backend later, run:"
-        echo "  source $INSTALL_DIR/venv/bin/activate && $INSTALL_DIR/scripts/install_parakeet.sh"
-        echo ""
-    fi
 
     if [[ "$NEEDS_REBOOT" == "true" ]]; then
         warn "A system reboot is required for some changes to take effect."

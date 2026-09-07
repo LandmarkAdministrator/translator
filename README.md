@@ -85,8 +85,11 @@ python3.11 -m venv ~/nemo-venv
 ~/nemo-venv/bin/pip install -r requirements-nemo.txt     # pinned from production
 ```
 
-(`install.sh` does not create this yet; a one-script install is an open
-item.) `./install.sh --parakeet` additionally installs the onnx-asr Parakeet
+`scripts/install_site.sh` does exactly that, plus the configuration files,
+the admin password, the scheduler and every systemd unit (and TLS with
+`--tls`); `install.sh` calls it at the end, and it is safe to rerun after any
+`git pull` (`--check` reports without changing anything). `./install.sh
+--parakeet` additionally installs the onnx-asr Parakeet
 TDT model, which the pipeline uses when `PARAKEET_MODEL` is not
 `unified-remote` — a fallback for a machine without the NeMo venv, with lower
 accuracy and no punctuation-driven sentence boundaries.
