@@ -23,6 +23,8 @@ in conversation; the findings are restated here with their outcome.
 | B4 | No unit tests on the core pipeline | build them if useful | Two added: pipeline configuration (would have caught the Russian crash), ASR client with fake servers |
 | B5 | Certificate renewal restarts the web server; must not land in a service window | early morning only | Timer changed to 03:20 daily, no catch-up on boot |
 | C | Hygiene: dead Whisper path, coupling into it, stale launcher defaults, site value in source, comment-destroying YAML writes, unbounded lockout table, committed scratch paths, no NeMo manifest | only after checking nothing breaks | All done; checked by the full test set plus end-to-end runs (§4) |
+| — | Found by the evening tally: the hang watchdog restarted a healthy service at 20:30 after 15 min of post-service silence | (user's A2 rule: silence is never a failure) | `HEARTBEAT` every 60 s from the audio path; `STALL_SECONDS` 900 → 300 |
+| — | The ASR module logged through stdlib `logging`, which nothing routes: "Parakeet loaded" and the stall-kill message never reached the service log | — | Module moved to loguru; the server's protocol is announced on start |
 
 Also fixed on the way, because the end-to-end test found it: `start()` opened
 the audio input *before* setting `_running`, and the callback drops chunks
@@ -116,6 +118,22 @@ until it is set. A paced input never noticed (first chunk after 1.5 s); a
 - `requirements-nemo.txt`: `pip freeze` of the production NeMo venv (Python
   3.11.15, nemo-toolkit 3.0.0, torch 2.11.0+cu128).
 
+### Heartbeat and the stall watchdog (`coordinator.py`, `translate-window-check.sh`)
+
+- `_on_audio_chunk_streaming` logs `HEARTBEAT | chunks=… | fragments=… |
+  asr_alive=… | queues=[…]` every `PIPELINE_HEARTBEAT_SEC` (60 s). It runs on
+  every chunk whether or not anyone is speaking, and stops only if the audio
+  thread is stuck — so the log's mtime now tracks the process, not the room.
+- `STALL_SECONDS` 900 → 300: five missed heartbeats is a hang; before, 180 s
+  restart-looped on pre-service silence (morning) and 900 s still restarted a
+  healthy service fifteen minutes after the evening's preaching ended.
+
+### ASR module logging (`parakeet_asr.py`)
+
+- Moved from stdlib `logging` (never routed anywhere, so its INFO lines were
+  invisible and its ERROR lines reached stderr bare) to loguru like the rest.
+- `start()` logs `unified ASR server ready: protocol 2 (…)` — the deploy check.
+
 ### Certificate renewal
 
 - `systemd/translate-cert-renew.timer`: `OnCalendar=*-*-* 03:20:00` (was
@@ -179,9 +197,22 @@ Everything below ran on the development laptop (ROCm) against this tree.
 | End-to-end `run.py --input-file` (90 s, Spanish, file input) | 55 chunks, 56 fragments, 17 sentences, 0 drops, clean drain, exit 0 |
 | Fatal path: `kill -9` the NeMo child mid-stream | `FATAL` logged, drain, `SESSION_END`, exit 1 seven seconds after the kill |
 
-Not exercised here: the RTX 3060 host itself (nothing deployed), the
-scheduler's force-stop against a real backlog worker (verified with a decoy
-process only), the cert timer (unit file change only).
+And on the **production host** itself (RTX 3060, CUDA), after the evening
+service, from a copy of this tree at `~/translator-review` sharing the venvs
+and models by symlink — the production checkout untouched:
+
+| Check | Result |
+|-------|--------|
+| `test_pipeline_config.py`, `test_asr_client.py`, `test_sentence_buffer.py` on the host, against its real `settings.yaml` | pass — es → Kokoro, ht → MMS, ru → MMS |
+| 90 s clip, paced, three languages to the real outputs (Behringer L/R, onboard jack) | 56 fragments, 17 sentences, 17 × ES/HT/RU, 2 heartbeats, 0 errors, exit 0 |
+| `kill -9` the NeMo child mid-stream | `FATAL`, drain, exit 1 six seconds later; GPU fully released |
+| 10-min sermon, unpaced | 386 fragments → 100 sentences in 95 s, `protocol 2` announced, GPU peak 8.2 GB (= production), ASR 86 ms/chunk, 0 errors |
+| its transcript vs the reference | **WER 2.64 %** — identical to the laptop capture's figure; 99.0 % end with a mark, 4.0 % two-sentence |
+
+Not exercised: the scheduler's force-stop against a real backlog worker
+(verified with a decoy process only), the cert timer (unit file change
+only), and the heartbeat against the *deployed* watchdog (the heartbeat lines
+were seen in every host run; the 300 s threshold ships with the scheduler).
 
 ---
 
@@ -208,11 +239,16 @@ ssh administrator@10.1.170.184
 cd ~/translator
 git fetch origin
 git reset --hard origin/master
-git log -1 --oneline          # the last review commit
+git log -1 --oneline          # the last review commit (660ffb5 or later)
+
+# the test copy used on 2026-09-06 evening; nothing depends on it
+rm -rf ~/translator-review ~/review-audio
 
 # 1. scheduler + launcher (+ guard, unchanged today) into ~/bin — the units point there
 cp scripts/ops/translate-window-check.sh scripts/ops/start-translate-unified scripts/ops/gpu-thermal-guard.sh ~/bin/
 diff ~/bin/translate-window-check.sh scripts/ops/translate-window-check.sh && echo same
+#    (this also takes STALL_SECONDS from 900 to 300 — safe only together with
+#     the pipeline code above, which writes the heartbeat it now expects)
 
 # 2. web unit gains TRANSLATOR_TRUSTED_PROXIES; restart is a ~2 s page reconnect
 cp systemd/translate-web.service ~/.config/systemd/user/
@@ -229,10 +265,8 @@ systemctl list-timers translate-cert-renew.timer      # next run 03:20–03:40
 ./venv/bin/python tests/test_pipeline_config.py
 
 # 5. a dry run of the pipeline on the host (mute the outputs, or run before anyone is in the room)
-#    Ctrl+C after "[EN]" lines appear; the NeMo server must announce protocol 2:
-#    the client logs nothing for it, but a stale client would show
-#    "token count drifted" warnings — none is correct.
-~/bin/start-translate-unified & sleep 120; tail -n 30 ~/translate.log; kill %1
+~/bin/start-translate-unified & sleep 120; kill %1
+grep -a "protocol 2\|HEARTBEAT" ~/translate.log | tail -3     # both must appear
 ```
 
 `translate.service` itself is not running on a Tuesday; the next scheduled
@@ -256,3 +290,11 @@ protocol change needs no coordination: either side works with the other.
 5. `scripts/download_models.py` no longer lists Whisper, but it still fetches
    only the Opus-MT / Piper fallbacks; the production models (NLLB, Kokoro,
    MMS, Parakeet) download themselves on first start. Part of item 4.
+6. **Names that are also words get translated.** Seen on the host run:
+   "Thank you, Brother Oar" → Russian "Спасибо, брат Весло" (a rowing oar);
+   Spanish presumably "Hermano Remo". Context biasing fixed the *recognition*
+   ("Orr" → "Oar") and NLLB then translated the word. The fix is a
+   name-protection list — the short-phrase dictionary already sits in front
+   of NLLB and is the natural place — reviewed by the speakers.
+7. A "hard numbers after a service" habit: `tests/service_tally.py` over
+   `~/translate.log` on the host.
