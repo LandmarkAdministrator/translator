@@ -20,10 +20,15 @@ no cloud services.
   Creole and Russian, Piper as a fallback.
 - **Simultaneous outputs** — two languages on one stereo interface (left /
   right), further languages on any other output the machine has.
-- **A page for phones** — live English and translated text plus per-language
-  audio over WebSocket, installable as a PWA, always reachable (it shows a
-  standby notice between services). An authenticated admin panel starts and
-  stops translation and edits the schedule and audio routing.
+- **A page for phones and screens** — live English and translated text plus
+  per-language audio over WebSocket, installable as a PWA, always reachable
+  (it shows a standby notice between services). English has two views —
+  *Sentences* (what is translated) and *Live* (the recognizer's words, a few
+  seconds earlier) — text scrolls up smoothly as new lines arrive, and the
+  type size is adjustable; a TV in the auditorium is set up once by URL,
+  e.g. `/?view=live&size=42&theme=dark`. `/?demo=1` plays a canned passage
+  for judging the page without a service. An authenticated admin panel
+  starts and stops translation and edits the schedule and audio routing.
 - **Runs itself** — service windows from `config/schedule.conf`, a scheduler
   that starts and stops the service and restarts it on a real hang, and a GPU
   thermal guard.

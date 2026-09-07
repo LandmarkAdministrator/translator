@@ -16,67 +16,98 @@
   :root {
     --bg: #F5F4F0; --card: #FFFFFF; --ink: #23211C; --muted: #8A8578;
     --line: #DDD9CF; --accent: #175E54; --accent-soft: #E3EEEC; --pending: #9A9484;
+    --fs: 17px;
   }
+  /* Theme: the OS decides unless ?theme=dark|light (or a saved choice) says
+     otherwise — an auditorium TV wants dark regardless of its browser's
+     setting. */
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #14130F; --card: #1E1C17; --ink: #EAE7DF; --muted: #928C7D;
-            --line: #33302A; --accent: #5FB3A5; --accent-soft: #1C2E2B; --pending: #6E695E; }
+    :root:not([data-theme="light"]) {
+      --bg: #14130F; --card: #1E1C17; --ink: #EAE7DF; --muted: #928C7D;
+      --line: #33302A; --accent: #5FB3A5; --accent-soft: #1C2E2B; --pending: #6E695E;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14130F; --card: #1E1C17; --ink: #EAE7DF; --muted: #928C7D;
+    --line: #33302A; --accent: #5FB3A5; --accent-soft: #1C2E2B; --pending: #6E695E;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
     font: 17px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif;
-    display: flex; flex-direction: column; min-height: 100dvh;
+    display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
   }
   header {
-    position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line);
-    padding: 10px 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
-    padding-top: calc(10px + env(safe-area-inset-top));
+    flex: none; background: var(--bg); border-bottom: 1px solid var(--line);
+    padding: 8px 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    padding-top: calc(8px + env(safe-area-inset-top));
   }
   header h1 { font-size: 16px; margin: 0 auto 0 0; font-weight: 600; letter-spacing: .02em; }
-  .langs { display: flex; gap: 6px; }
-  .langs button {
-    font: inherit; font-size: 14px; padding: 6px 14px; border-radius: 999px;
-    border: 1px solid var(--line); background: var(--card); color: var(--ink); cursor: pointer;
-  }
-  .langs button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
-  #listen {
+  .seg { display: flex; gap: 6px; }
+  .seg button, #listen, .size button {
     font: inherit; font-size: 14px; padding: 6px 14px; border-radius: 999px; cursor: pointer;
-    border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent);
+    border: 1px solid var(--line); background: var(--card); color: var(--ink);
   }
+  .seg button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #listen { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
   #listen[aria-pressed="true"] { background: var(--accent); color: #fff; }
-  #listen[hidden] { display: none; }
+  .size { display: flex; gap: 4px; }
+  .size button { padding: 6px 11px; font-weight: 600; }
   #status { font-size: 12px; color: var(--muted); }
   #phones {
-    margin: 0; padding: 8px 14px; font-size: 13px; text-align: center;
-    color: var(--accent); background: var(--accent-soft);
-    border-bottom: 1px solid var(--line);
+    flex: none; margin: 0; padding: 8px 14px; font-size: 13px; text-align: center;
+    color: var(--accent); background: var(--accent-soft); border-bottom: 1px solid var(--line);
   }
-  #phones[hidden] { display: none; }
-  main { flex: 1; max-width: 46rem; width: 100%; margin: 0 auto; padding: 16px 14px 40vh; }
-  p.line { margin: 0 0 .7em; }
-  #pending { color: var(--pending); }
-  #pending::after { content: "▍"; opacity: .6; animation: blink 1.1s step-start infinite; }
+  /* The text lives in its own scrolling pane, anchored to the bottom like a
+     teleprompter: a new line pushes the older ones up rather than the page
+     growing underneath the reader. overflow-anchor is off because the pane
+     does its own following; the browser's anchoring fought the animation. */
+  main#pane {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-anchor: none;
+    -webkit-overflow-scrolling: touch; position: relative;
+  }
+  #scroller {
+    min-height: 100%; display: flex; flex-direction: column; justify-content: flex-end;
+    max-width: 38em; margin: 0 auto; padding: 16px 14px 20px;
+    font-size: var(--fs); line-height: 1.45;
+  }
+  p.line { margin: 0 0 .55em; overflow-wrap: anywhere; }
+  p.open::after { content: "▍"; opacity: .6; animation: blink 1.1s step-start infinite; }
   @keyframes blink { 50% { opacity: 0; } }
   .replay { opacity: .55; }
-  #standby {
-    max-width: 30rem; margin: 12vh auto 0; text-align: center; color: var(--muted);
+  #jump {
+    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+    font: inherit; font-size: 14px; padding: 8px 16px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+    box-shadow: 0 2px 10px rgba(0,0,0,.25);
   }
-  #standby[hidden] { display: none; }
+  #standby { max-width: 30rem; margin: 12vh auto 0; padding: 0 14px; text-align: center; color: var(--muted); }
   #standby .mark { font-size: 30px; line-height: 1; margin-bottom: 12px; opacity: .5; }
-  #standby h2 { font-size: 17px; margin: 0 0 6px; color: var(--fg); font-weight: 600; }
+  #standby h2 { font-size: 17px; margin: 0 0 6px; color: var(--ink); font-weight: 600; }
   #standby p { margin: 0; font-size: 14px; }
   #standby .times { margin-top: 14px; font-size: 13px; line-height: 1.7; }
   footer {
-    text-align: center; color: var(--muted); font-size: 12px;
-    padding: 10px 10px calc(10px + env(safe-area-inset-bottom));
+    flex: none; text-align: center; color: var(--muted); font-size: 12px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
   }
+  @media (prefers-reduced-motion: reduce) { p.open::after { animation: none; } }
 </style>
 </head>
 <body>
 <header>
   <h1>Live Translation</h1>
-  <nav class="langs" id="langs"></nav>
+  <nav class="seg" id="langs"></nav>
+  <nav class="seg" id="view" hidden>
+    <button data-view="sentences" aria-pressed="true" title="Finished sentences, as they are translated">Sentences</button>
+    <button data-view="live" aria-pressed="false" title="Words as they are recognized, a few seconds earlier">Live</button>
+  </nav>
   <button id="listen" hidden aria-pressed="false">🔊 Listen</button>
+  <div class="size">
+    <button id="fminus" aria-label="Smaller text" title="Smaller text">A−</button>
+    <button id="fplus" aria-label="Larger text" title="Larger text">A+</button>
+  </div>
   <span id="status">connecting…</span>
 </header>
 <p id="phones" hidden></p>
@@ -87,22 +118,144 @@
     <p id="sb-body">Live translation will appear here automatically when the service begins.</p>
     <div class="times" id="sb-times"></div>
   </div>
-  <div id="lines"></div>
-  <p class="line" id="pending"></p>
+  <div id="scroller"></div>
+  <button id="jump" hidden>↓ Live</button>
 </main>
 <footer id="foot">live machine translation</footer>
 <script>
 (function () {
   "use strict";
-  var lang = "en";
-  var listening = false;
-  var linesEl = document.getElementById("lines");
-  var pendingEl = document.getElementById("pending");
-  var statusEl = document.getElementById("status");
-  var listenBtn = document.getElementById("listen");
-  var pendingWords = [];
-  var texts = {};            // finished lines per language, keyed by code
+  var $ = function (id) { return document.getElementById(id); };
+  var pane = $("pane"), scroller = $("scroller"), jumpBtn = $("jump");
+  var statusEl = $("status"), listenBtn = $("listen"), viewNav = $("view"), phonesEl = $("phones");
+  var params = new URLSearchParams(location.search);
   var MAX_LINES = 300;
+  var lang = "en", listening = false;
+
+  // ---- preferences: URL parameter > saved choice > default ----------------
+  // A TV in the auditorium is set up once by URL, e.g. /?view=live&size=42&theme=dark
+  function pref(key, fallback) {
+    var v = params.get(key);
+    if (v !== null) { try { localStorage.setItem("tr." + key, v); } catch (e) {} return v; }
+    try { v = localStorage.getItem("tr." + key); } catch (e) { v = null; }
+    return v !== null ? v : fallback;
+  }
+  var view = pref("view", "sentences") === "live" ? "live" : "sentences";
+  var theme = pref("theme", "");
+  if (theme === "dark" || theme === "light") document.documentElement.dataset.theme = theme;
+  var SIZES = [15, 17, 20, 24, 28, 34, 42, 52];
+  var size = parseInt(pref("size", window.matchMedia("(min-width: 900px)").matches ? "28" : "17"), 10);
+  if (!(size >= 10 && size <= 96)) size = 17;
+  function applySize() {
+    document.documentElement.style.setProperty("--fs", size + "px");
+    try { localStorage.setItem("tr.size", String(size)); } catch (e) {}
+    $("fminus").title = "Smaller text (" + size + "px)";
+    $("fplus").title = "Larger text (" + size + "px)";
+    settle();
+  }
+  function stepSize(dir) {
+    var i = 0;
+    for (var k = 0; k < SIZES.length; k++) if (SIZES[k] <= size) i = k;
+    if (dir > 0 && SIZES[i] <= size && i < SIZES.length - 1) i++;
+    if (dir < 0 && i > 0 && SIZES[i] >= size) i--;
+    size = SIZES[i];
+    applySize();
+  }
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ---- models --------------------------------------------------------------
+  // Two independent streams for English. "Sentences" is what is translated:
+  // one paragraph per finished sentence. "Live" is the recognizer's own
+  // output, word by word, a few seconds earlier, cut into paragraphs at the
+  // sentence marks it emits. They are never reconciled against each other —
+  // the old page trimmed a shared pending line by word count, and once the
+  // closing mark started arriving as its own token that count drifted by one
+  // per sentence, leaving minutes of stale text in the gray line.
+  var sent = {};                 // code -> [{text, replay}]
+  var liveClosed = [];           // finished live paragraphs [{text, replay}]
+  var liveOpen = "";             // the paragraph still being spoken
+  var openEl = null;             // its <p>, when the live view is showing
+
+  // ---- following the bottom -----------------------------------------------
+  var following = true;
+  function nearBottom() {
+    return pane.scrollTop + pane.clientHeight >= pane.scrollHeight - 80;
+  }
+  function settle() {
+    if (!following) return;
+    pane.scrollTo({ top: pane.scrollHeight, behavior: reduced ? "auto" : "smooth" });
+  }
+  function userMoved() {
+    // A person scrolling up wants to read; stop pulling the pane away from
+    // them and offer the way back. Programmatic scrolls never reach here.
+    var nb = nearBottom();
+    if (following && !nb) { following = false; jumpBtn.hidden = false; }
+    else if (!following && nb) { following = true; jumpBtn.hidden = true; }
+  }
+  ["wheel", "touchmove", "keydown"].forEach(function (t) {
+    pane.addEventListener(t, function () { setTimeout(userMoved, 60); }, { passive: true });
+  });
+  pane.addEventListener("scroll", function () { if (!following && nearBottom()) userMoved(); }, { passive: true });
+  jumpBtn.addEventListener("click", function () {
+    following = true; jumpBtn.hidden = true; settle();
+  });
+
+  // ---- rendering: incremental, so existing lines never re-layout ------------
+  function makeP(text, replay, open) {
+    var p = document.createElement("p");
+    p.className = "line" + (replay ? " replay" : "") + (open ? " open" : "");
+    p.textContent = text;
+    return p;
+  }
+  function trimDom() {
+    while (scroller.childElementCount > MAX_LINES) scroller.removeChild(scroller.firstElementChild);
+  }
+  function appendLine(text, replay) {
+    var p = makeP(text, replay, false);
+    if (openEl) scroller.insertBefore(p, openEl); else scroller.appendChild(p);
+    trimDom();
+    settle();
+  }
+  function showOpen() {
+    if (!(lang === "en" && view === "live")) return;
+    if (!liveOpen) { if (openEl) { openEl.remove(); openEl = null; } return; }
+    if (!openEl) { openEl = makeP(liveOpen, false, true); scroller.appendChild(openEl); }
+    else openEl.textContent = liveOpen;
+    settle();
+  }
+  function rebuild() {
+    scroller.textContent = "";
+    openEl = null;
+    var list = (lang === "en" && view === "live") ? liveClosed : (sent[lang] || []);
+    for (var i = Math.max(0, list.length - MAX_LINES); i < list.length; i++)
+      scroller.appendChild(makeP(list[i].text, list[i].replay, false));
+    showOpen();
+    following = true; jumpBtn.hidden = true;
+    pane.scrollTop = pane.scrollHeight;
+  }
+  function pushSent(code, text, replay) {
+    if (!sent[code]) sent[code] = [];
+    sent[code].push({ text: text, replay: !!replay });
+    if (sent[code].length > MAX_LINES * 2) sent[code] = sent[code].slice(-MAX_LINES);
+    if (lang === code && !(code === "en" && view === "live")) appendLine(text, replay);
+  }
+  // Fragments carry their own leading space (SentencePiece style) and the
+  // closing mark of a sentence opens the next fragment; joining them as-is
+  // and tidying "word ." to "word." gives natural text.
+  var SPLIT = /([.?!]["')\]]?)\s+(?=\S)/;
+  function pushCommit(text) {
+    liveOpen = (liveOpen + text).replace(/\s+([,.;:!?])/g, "$1").replace(/\s+/g, " ");
+    if (!liveOpen.trim()) { liveOpen = ""; return; }
+    var m;
+    while ((m = SPLIT.exec(liveOpen))) {
+      var closed = liveOpen.slice(0, m.index + m[1].length).trim();
+      liveOpen = liveOpen.slice(m.index + m[0].length);
+      liveClosed.push({ text: closed, replay: false });
+      if (liveClosed.length > MAX_LINES * 2) liveClosed = liveClosed.slice(-MAX_LINES);
+      if (lang === "en" && view === "live") appendLine(closed, false);
+    }
+    showOpen();
+  }
 
   // ---- audio (gapless per-sentence scheduling) -------------------------
   var ctx = null, nextStart = 0;
@@ -122,52 +275,23 @@
     });
   }
 
-  // ---- rendering --------------------------------------------------------
-  function nearBottom() {
-    return window.innerHeight + window.scrollY >= document.body.scrollHeight - 160;
-  }
-  function render() {
-    var list = texts[lang];
-    var html = "";
-    for (var i = Math.max(0, list.length - MAX_LINES); i < list.length; i++) {
-      html += '<p class="line' + (list[i].replay ? " replay" : "") + '">' + esc(list[i].text) + "</p>";
-    }
-    var stick = nearBottom();
-    linesEl.innerHTML = html;
-    pendingEl.textContent = lang === "en" ? pendingWords.join(" ") : "";
-    pendingEl.style.display = (lang === "en" && pendingWords.length) ? "" : "none";
-    if (stick) window.scrollTo(0, document.body.scrollHeight);
-  }
-  function esc(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  }
-  function push(l, text, replay) {
-    texts[l].push({ text: text, replay: !!replay });
-    if (texts[l].length > MAX_LINES * 2) texts[l] = texts[l].slice(-MAX_LINES);
-    if (l === lang) render();
-  }
-
   // ---- events -----------------------------------------------------------
   function onEvent(ev, binary) {
     if (binary) {
       if (ev.kind === lang + ".audio") playWav(binary);
       return;
     }
-    if (ev.kind === "status") {
-      setLive(ev.live);
-      return;
-    }
+    if (ev.kind === "status") { setLive(ev.live); return; }
     if (ev.kind === "en.commit") {
-      var ws = ev.text.trim().split(/\s+/).filter(Boolean);
-      pendingWords = pendingWords.concat(ws);
-      if (lang === "en") render();
+      pushCommit(ev.text || "");
     } else if (ev.kind === "en.sentence") {
-      var n = ev.text.trim().split(/\s+/).filter(Boolean).length;
-      pendingWords = pendingWords.slice(n);
-      push("en", ev.text, ev.replay);
+      pushSent("en", ev.text, ev.replay);
+      // A late joiner gets recent sentences replayed but no commits, so the
+      // live view seeds itself from them (dimmed) rather than starting blank.
+      if (ev.replay) { liveClosed.push({ text: ev.text, replay: true }); if (lang === "en" && view === "live") appendLine(ev.text, true); }
     } else if (ev.kind.slice(-5) === ".text") {
       var code = ev.kind.slice(0, -5);
-      if (texts[code]) push(code, ev.text, ev.replay);
+      if (sent[code]) pushSent(code, ev.text, ev.replay);
     }
   }
 
@@ -178,7 +302,6 @@
   // audio out of a phone speaker carries to everyone nearby.
   // Filled from /config.json before the socket opens; see site.json.
   var TIMES = {}, STRINGS = {}, LANGS = [];
-  var phonesEl = document.getElementById("phones");
   function hasAudio(code) {
     for (var i = 0; i < LANGS.length; i++)
       if (LANGS[i].code === code) return !!LANGS[i].audio;
@@ -191,33 +314,31 @@
     listenBtn.hidden = !hasAudio(lang) || live === false;
     phonesEl.textContent = s.phones;
     phonesEl.hidden = !s.phones || live === false;
-    document.getElementById("sb-title").textContent = s.sbTitle;
-    document.getElementById("sb-body").textContent = s.sbBody;
-    document.getElementById("sb-times").innerHTML = TIMES[lang] || TIMES.en;
+    viewNav.hidden = lang !== "en";
+    $("sb-title").textContent = s.sbTitle;
+    $("sb-body").textContent = s.sbBody;
+    $("sb-times").innerHTML = TIMES[lang] || TIMES.en;
   }
-
 
   // ---- live / standby ---------------------------------------------------
   // The server stays up between services, so "connected" and "a service is
   // running" are different things; the page has to say which one it means.
-  var standbyEl = document.getElementById("standby");
+  var standbyEl = $("standby");
   var live = null;
   function setLive(on) {
     on = !!on;
     if (on === live) return;
     live = on;
     standbyEl.hidden = on;
-    linesEl.hidden = !on;
-    pendingEl.hidden = !on;
-    // English is text-only, so the button stays hidden there either way.
+    scroller.hidden = !on;
     applyLang();
     statusEl.textContent = on ? "live" : "standby";
     if (!on) {
       // Drop the finished service's transcript so the next one starts clean.
-      texts = {};
-      LANGS.forEach(function (l) { texts[l.code] = []; });
-      pendingWords = [];
-      render();
+      sent = {};
+      LANGS.forEach(function (l) { sent[l.code] = []; });
+      liveClosed = []; liveOpen = "";
+      rebuild();
     }
   }
 
@@ -243,6 +364,45 @@
       retry = Math.min(retry * 2, 15000);
     };
   }
+
+  // ---- demo: /?demo=1 plays a canned passage so the page can be judged on
+  // a phone or the auditorium TV without a service running. Never connects.
+  var DEMO = [
+    ["Thank you, Brother Oar.", "Gracias, hermano Oar."],
+    ["I hope it is well with your soul tonight.", "Espero que esta noche esté bien tu alma."],
+    ["Take your Bibles and go to Daniel chapter number 6.", "Tomen sus Biblias y vayan a Daniel capítulo 6."],
+    ["Daniel chapter number 6 in the Old Testament.", "Daniel capítulo 6 en el Antiguo Testamento."],
+    ["Then the presidents and the princes sought to find occasion against Daniel.", "Entonces los presidentes y los príncipes buscaron ocasión contra Daniel."],
+    ["Because they didn't want this guy.", "Porque no querían a este hombre."],
+    ["They weren't happy with him.", "No estaban contentos con él."],
+    ["He was a man of prayer, and they knew it.", "Era un hombre de oración, y ellos lo sabían."]
+  ];
+  function runDemo() {
+    var i = 0, mark = "";
+    function nextSentence() {
+      var en = DEMO[i % DEMO.length][0], es = DEMO[i % DEMO.length][1];
+      var words = en.replace(/[.?!]$/, "").split(" "), last = en.slice(-1);
+      var k = 0;
+      (function frag() {
+        var n = 1 + Math.floor(Math.random() * 3);
+        var piece = words.slice(k, k + n).map(function (w) { return " " + w; }).join("");
+        if (k === 0 && mark) piece = mark + piece;      // the mark opens the next fragment
+        onEvent({ kind: "en.commit", text: piece }, null);
+        if (k === 0 && i > 0) {                         // ...which is when the sentence closes
+          var prev = DEMO[(i - 1) % DEMO.length];
+          onEvent({ kind: "en.sentence", text: prev[0] }, null);
+          setTimeout(function () { onEvent({ kind: "es.text", text: prev[1] }, null); }, 1300);
+        }
+        k += n;
+        if (k < words.length) setTimeout(frag, 380 + Math.random() * 300);
+        else { mark = last; i++; setTimeout(nextSentence, 900 + Math.random() * 900); }
+      })();
+    }
+    setLive(true);
+    statusEl.textContent = "demo";
+    nextSentence();
+  }
+
   // ---- boot: site config first, then the socket -------------------------
   // Languages, wording and service times are congregation-specific, so they
   // come from the server rather than being baked into this file.
@@ -250,30 +410,36 @@
     LANGS = cfg.languages || [];
     TIMES = cfg.service_times || {};
     STRINGS = {};
-    texts = {};
-    var nav = document.getElementById("langs"), html = "";
+    sent = {};
+    var nav = $("langs"), html = "";
     LANGS.forEach(function (l) {
       STRINGS[l.code] = l.strings || {};
-      texts[l.code] = [];
+      sent[l.code] = [];
       html += '<button data-lang="' + esc(l.code) + '" aria-pressed="' +
               (l.code === lang) + '">' + esc(l.label) + "</button>";
     });
     nav.innerHTML = html;
-    if (!texts[lang] && LANGS.length) lang = LANGS[0].code;
+    if (!sent[lang] && LANGS.length) lang = LANGS[0].code;
     if (cfg.app_name) {
       document.querySelector("header h1").textContent = cfg.app_name;
       document.title = cfg.app_name;
     }
-    document.getElementById("foot").textContent =
-      (cfg.church_name ? cfg.church_name + " · " : "") + "live machine translation";
+    $("foot").textContent = (cfg.church_name ? cfg.church_name + " · " : "") + "live machine translation";
     applyLang();
-    render();
+    rebuild();
   }
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  applySize();
+  viewNav.querySelectorAll("button").forEach(function (b) {
+    b.setAttribute("aria-pressed", String(b.dataset.view === view));
+  });
   fetch("/config.json", { cache: "no-store" })
     .then(function (r) { return r.json(); })
     .then(applyConfig)
     .catch(function () {})       // page still works; buttons just stay empty
-    .then(connect);
+    .then(params.get("demo") ? runDemo : connect);
 
   // Installable app: register the shell worker. Failure is non-fatal — the
   // page works identically without it, just not installable/offline-tolerant.
@@ -284,7 +450,7 @@
   }
 
   // ---- controls ---------------------------------------------------------
-  document.getElementById("langs").addEventListener("click", function (e) {
+  $("langs").addEventListener("click", function (e) {
     var b = e.target.closest("button[data-lang]");
     if (!b) return;
     lang = b.dataset.lang;
@@ -292,8 +458,20 @@
       x.setAttribute("aria-pressed", String(x === b));
     });
     applyLang();
-    render();
+    rebuild();
   });
+  viewNav.addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-view]");
+    if (!b) return;
+    view = b.dataset.view;
+    try { localStorage.setItem("tr.view", view); } catch (e2) {}
+    this.querySelectorAll("button").forEach(function (x) {
+      x.setAttribute("aria-pressed", String(x === b));
+    });
+    rebuild();
+  });
+  $("fminus").addEventListener("click", function () { stepSize(-1); });
+  $("fplus").addEventListener("click", function () { stepSize(1); });
   listenBtn.addEventListener("click", function () {
     listening = !listening;
     this.setAttribute("aria-pressed", String(listening));
