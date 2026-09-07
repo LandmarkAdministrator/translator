@@ -92,6 +92,16 @@
     flex: none; text-align: center; color: var(--muted); font-size: 12px;
     padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
   }
+  /* Kiosk (?kiosk=1): a dedicated screen shows nothing but the text. */
+  .kiosk header, .kiosk footer, .kiosk #phones, .kiosk #jump { display: none !important; }
+  .kiosk #scroller { padding: 4vh 4vw; }
+  /* Sound requested by URL but the browser wants a gesture first. */
+  #tap {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    font: inherit; font-size: 22px; padding: 18px 28px; border-radius: 14px; cursor: pointer;
+    border: 1px solid var(--accent); background: var(--accent); color: #fff;
+    box-shadow: 0 4px 24px rgba(0,0,0,.35);
+  }
   @media (prefers-reduced-motion: reduce) { p.open::after { animation: none; } }
 </style>
 </head>
@@ -120,20 +130,25 @@
   </div>
   <div id="scroller"></div>
   <button id="jump" hidden>↓ Live</button>
+  <button id="tap" hidden>🔊</button>
 </main>
 <footer id="foot">live machine translation</footer>
 <script>
 (function () {
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
-  var pane = $("pane"), scroller = $("scroller"), jumpBtn = $("jump");
+  var pane = $("pane"), scroller = $("scroller"), jumpBtn = $("jump"), tapBtn = $("tap");
   var statusEl = $("status"), listenBtn = $("listen"), viewNav = $("view"), phonesEl = $("phones");
   var params = new URLSearchParams(location.search);
   var MAX_LINES = 300;
   var lang = "en", listening = false;
 
   // ---- preferences: URL parameter > saved choice > default ----------------
-  // A TV in the auditorium is set up once by URL, e.g. /?view=live&size=42&theme=dark
+  // A TV in the auditorium is set up once by URL, e.g.
+  //   /?lang=en&view=live&size=42&theme=dark&kiosk=1
+  //   /?lang=es&audio=1&size=34            (a screen that also plays the audio)
+  // Every parameter is remembered on that device; give it again with another
+  // value to change it (kiosk=0, audio=0).
   function pref(key, fallback) {
     var v = params.get(key);
     if (v !== null) { try { localStorage.setItem("tr." + key, v); } catch (e) {} return v; }
@@ -141,6 +156,11 @@
     return v !== null ? v : fallback;
   }
   var view = pref("view", "sentences") === "live" ? "live" : "sentences";
+  var kiosk = pref("kiosk", "0") === "1";
+  if (kiosk) document.documentElement.classList.add("kiosk");
+  var wantLang = pref("lang", "");
+  if (wantLang) lang = wantLang;
+  var autoAudio = pref("audio", "0") === "1";
   var theme = pref("theme", "");
   if (theme === "dark" || theme === "light") document.documentElement.dataset.theme = theme;
   var SIZES = [15, 17, 20, 24, 28, 34, 42, 52];
@@ -263,6 +283,19 @@
     if (!ctx) { ctx = new (window.AudioContext || window.webkitAudioContext)(); nextStart = 0; }
     if (ctx.state === "suspended") ctx.resume();
   }
+  function startAudio() {
+    // ?audio=1: begin listening without a tap. Browsers usually refuse to
+    // start sound before a gesture, so if the context stays suspended a big
+    // button asks for one; a kiosk browser with autoplay allowed needs none.
+    if (!hasAudio(lang) || live === false) return;
+    listening = true;
+    listenBtn.setAttribute("aria-pressed", "true");
+    applyLang();
+    ensureCtx();
+    setTimeout(function () { tapBtn.hidden = !(ctx && ctx.state === "suspended"); }, 300);
+    if (ctx) ctx.onstatechange = function () { if (ctx.state === "running") tapBtn.hidden = true; };
+  }
+  tapBtn.addEventListener("click", function () { ensureCtx(); tapBtn.hidden = true; });
   function playWav(buf) {
     if (!listening || !ctx) return;
     ctx.decodeAudioData(buf.slice(0), function (audio) {
@@ -311,6 +344,7 @@
     var s = STRINGS[lang] || STRINGS.en;
     if (!s) return;
     listenBtn.textContent = listening ? s.listening : s.listen;
+    tapBtn.textContent = s.listen;
     listenBtn.hidden = !hasAudio(lang) || live === false;
     phonesEl.textContent = s.phones;
     phonesEl.hidden = !s.phones || live === false;
@@ -333,6 +367,7 @@
     scroller.hidden = !on;
     applyLang();
     statusEl.textContent = on ? "live" : "standby";
+    if (on && autoAudio && !listening) startAudio();
     if (!on) {
       // Drop the finished service's transcript so the next one starts clean.
       sent = {};
@@ -425,6 +460,9 @@
       document.title = cfg.app_name;
     }
     $("foot").textContent = (cfg.church_name ? cfg.church_name + " · " : "") + "live machine translation";
+    nav.querySelectorAll("button").forEach(function (x) {
+      x.setAttribute("aria-pressed", String(x.dataset.lang === lang));
+    });
     applyLang();
     rebuild();
   }
@@ -454,6 +492,7 @@
     var b = e.target.closest("button[data-lang]");
     if (!b) return;
     lang = b.dataset.lang;
+    try { localStorage.setItem("tr.lang", lang); } catch (e2) {}
     this.querySelectorAll("button").forEach(function (x) {
       x.setAttribute("aria-pressed", String(x === b));
     });
