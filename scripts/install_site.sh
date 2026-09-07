@@ -165,7 +165,7 @@ put "$REPO/scripts/ops/start-translate-unified"   "$HOME/bin/start-translate-uni
 # ---- 6. user units --------------------------------------------------------
 step "6. systemd user units"
 mkdir -p "$UNITS"
-CHANGED_UNITS=0
+CHANGED_UNITS=0; WEB_CHANGED=0
 unit() {  # unit NAME  (copies verbatim when it differs)
   if cmp -s "$REPO/systemd/$1" "$UNITS/$1" 2>/dev/null; then ok "$1 unchanged"
   elif [ "$CHECK" = 1 ]; then say "would" "install $1"
@@ -185,7 +185,7 @@ sed -e "s|^Environment=WEB_HOST=.*|Environment=WEB_HOST=$host|" \
     -e "s|^Environment=TRANSLATOR_TRUSTED_PROXIES=.*|Environment=TRANSLATOR_TRUSTED_PROXIES=$prox|" "$WEB_SRC" > "$tmp"
 if cmp -s "$tmp" "$WEB_DST" 2>/dev/null; then ok "translate-web.service unchanged (host $host, proxies $prox)"
 elif [ "$CHECK" = 1 ]; then say "would" "install translate-web.service (WEB_HOST=$host, trusted proxies $prox)"
-else cp "$tmp" "$WEB_DST" && chg "translate-web.service (WEB_HOST=$host, trusted proxies $prox)" && CHANGED_UNITS=1; fi
+else cp "$tmp" "$WEB_DST" && chg "translate-web.service (WEB_HOST=$host, trusted proxies $prox)" && WEB_CHANGED=1; fi
 rm -f "$tmp"
 if [ "$CHECK" = 0 ]; then
   systemctl --user daemon-reload
@@ -193,7 +193,9 @@ if [ "$CHECK" = 0 ]; then
     && ok "enabled: translate-web.service, translate-window.timer, translate-tally.timer" \
     || fail "could not enable the user units"
   if [ "$THERMAL" = 1 ]; then systemctl --user enable --now gpu-thermal-guard.service >/dev/null 2>&1 && ok "enabled: gpu-thermal-guard.service"; fi
-  [ "$CHANGED_UNITS" = 1 ] && systemctl --user restart translate-web.service && chg "translate-web.service restarted"
+  # Only the web unit's own change warrants the two-second page blip of a
+  # restart; the timers and the pipeline unit are re-read at their next use.
+  [ "$WEB_CHANGED" = 1 ] && systemctl --user restart translate-web.service && chg "translate-web.service restarted"
   systemctl --user disable translate.service >/dev/null 2>&1; ok "translate.service left to the window timer (not enabled at boot)"
 fi
 
