@@ -18,8 +18,16 @@ ExecStart=%h/bin/start-translate-unified
 Restart=always
 RestartSec=5
 WorkingDirectory=%h
-# Give it 30 s to shut down cleanly when you power-off
-TimeoutStopSec=30
+# Stop with SIGINT so the pipeline takes its drain path: the input closes, the
+# last sentence is flushed and spoken, and SESSION_END is logged. The default
+# SIGTERM killed it mid-word at every window end and left no session stats.
+# mixed: only the main process gets the signal; the NeMo child is killed after
+# it exits, so the final flush can still collect the last tokens.
+KillSignal=SIGINT
+KillMode=mixed
+# The drain waits up to 60 s for audio; cap below that so a wedged stop can
+# never hold the scheduler.
+TimeoutStopSec=45
 
 [Install]
 WantedBy=default.target
