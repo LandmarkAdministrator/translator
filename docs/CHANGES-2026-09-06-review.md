@@ -1,9 +1,11 @@
 # 2026-09-06 (evening) — code review follow-up: staged, not deployed
 
 A full read of the production path after the day's work, the decisions taken
-on each finding, and what changed. **Nothing here is on the production host
-yet**; §5 is the deployment checklist for Tuesday 2026-09-08, outside a
-service window.
+on each finding, and what changed. **Deployed to the production host on
+Monday 2026-09-07, 16:08–16:15 EDT** (a day early, outside any window; the
+backlog worker happened to be idle). §5 is the checklist that was followed,
+each step verified; the dry run through the unit showed `protocol 2`, a
+heartbeat 24 s after start, biasing on, the right environment, no errors.
 
 The review itself (what the system does, how, and the findings) was delivered
 in conversation; the findings are restated here with their outcome.
@@ -134,6 +136,16 @@ until it is set. A paced input never noticed (first chunk after 1.5 s); a
   invisible and its ERROR lines reached stderr bare) to loguru like the rest.
 - `start()` logs `unified ASR server ready: protocol 2 (…)` — the deploy check.
 
+### Service stop (`systemd/translate.service`)
+
+- Found by the post-deploy dry run: `systemctl stop` sent SIGTERM, which
+  Python treats as an immediate exit, so the pipeline never took its drain
+  path — the last sentence was cut mid-word at every window end and no
+  `SESSION_END` was logged. Now `KillSignal=SIGINT` (the Ctrl+C path: input
+  closes, final flush, queued audio plays, stats logged), `KillMode=mixed`
+  (the NeMo child outlives the main process just long enough to hand over
+  the last tokens), `TimeoutStopSec=45`.
+
 ### Certificate renewal
 
 - `systemd/translate-cert-renew.timer`: `OnCalendar=*-*-* 03:20:00` (was
@@ -208,6 +220,7 @@ and models by symlink — the production checkout untouched:
 | `kill -9` the NeMo child mid-stream | `FATAL`, drain, exit 1 six seconds later; GPU fully released |
 | 10-min sermon, unpaced | 386 fragments → 100 sentences in 95 s, `protocol 2` announced, GPU peak 8.2 GB (= production), ASR 86 ms/chunk, 0 errors |
 | its transcript vs the reference | **WER 2.64 %** — identical to the laptop capture's figure; 99.0 % end with a mark, 4.0 % two-sentence |
+| **after deployment**, `systemctl --user start translate.service` on the real unit | heartbeat at 24 s, `protocol 2`, biasing on, env correct, 0 errors; stop clean |
 
 Not exercised: the scheduler's force-stop against a real backlog worker
 (verified with a decoy process only), the cert timer (unit file change
@@ -216,7 +229,7 @@ were seen in every host run; the 300 s threshold ships with the scheduler).
 
 ---
 
-## 5. Deployment checklist — Tuesday, outside a window
+## 5. Deployment checklist — done 2026-09-07 (kept as the procedure)
 
 The production checkout is at `cff8b00` (2026-09-02); everything since was
 copied in by hand, so it shows 8 modified tracked files and 21 untracked
