@@ -1,0 +1,9 @@
+# User unit: ~/.config/systemd/user/translate-tally.service
+# Driven by translate-tally.timer; the admin panel's "Run tally now" runs the
+# same script directly. Stdlib only, so the system python is enough.
+[Unit]
+Description=Tally the day's translation services
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/translator/tests/service_tally.py --out %h/sermons/logs/service-tally

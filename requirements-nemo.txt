@@ -6,8 +6,11 @@
 #   python3.11 -m venv ~/nemo-venv
 #   ~/nemo-venv/bin/pip install -r requirements-nemo.txt
 #
-# On an AMD/ROCm machine the torch line must be swapped for the ROCm wheel;
-# everything else is the same.
+# torch's +cu128 build lives on PyTorch's own index, so pip and uv need it
+# (this line is honoured inside a requirements file). On an AMD/ROCm machine
+# use https://download.pytorch.org/whl/rocm7.2 and the matching torch line
+# instead; everything else is the same.
+--extra-index-url https://download.pytorch.org/whl/cu128
 absl-py==2.5.0
 accelerate==1.14.0
 aiohappyeyeballs==2.7.1

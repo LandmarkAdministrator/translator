@@ -36,9 +36,13 @@ def setup_logger(
     # Remove default handler
     logger.remove()
 
-    # Console output format
+    # Console output format. The date is part of it: the service's stdout is
+    # appended to one file across days (~/translate.log), and both the
+    # scheduler's dead-output check and the nightly tally select lines by
+    # date — with a bare time the check compared "HH:MM:SS |" against a
+    # dated cutoff and never matched.
     console_format = (
-        "<green>{time:HH:mm:ss}</green> | "
+        "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
         "<level>{level: <8}</level> | "
         "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
         "<level>{message}</level>"

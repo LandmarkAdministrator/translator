@@ -69,10 +69,22 @@ def gather_status() -> dict:
             st["scheduler"] = wlog.read_text(errors="replace").splitlines()[-5:]
         except Exception:
             pass
+
+    # The nightly tally (tests/service_tally.py via translate-tally.timer),
+    # or the one "Run tally now" just produced.
+    latest = TALLY_DIR / "latest.txt"
+    if latest.exists():
+        try:
+            st["tally"] = {"text": latest.read_text(errors="replace")[:20000],
+                           "generated": time.strftime("%Y-%m-%d %H:%M", time.localtime(latest.stat().st_mtime))}
+        except Exception:
+            pass
     return st
 
 
 OVERRIDE_FLAG = Path.home() / "translate-manual.flag"
+TALLY_DIR = Path.home() / "sermons" / "logs" / "service-tally"
+TALLY_SCRIPT = Path.home() / "translator" / "tests" / "service_tally.py"
 UNIT = Path.home() / ".config" / "systemd" / "user" / "translate.service"
 WANT_EXEC = str(Path.home() / "bin" / "start-translate-unified")
 
@@ -162,6 +174,16 @@ def do_action(name: str) -> tuple[bool, str]:
             return True, "The schedule was already running automatically."
         except Exception as e:
             return False, f"Could not resume the schedule: {e}"
+    if name == "tally":
+        # Detached: the script takes a few seconds over a day's log and the
+        # panel refreshes itself every five seconds, so nothing waits on it.
+        try:
+            TALLY_DIR.mkdir(parents=True, exist_ok=True)
+            subprocess.Popen(["/usr/bin/python3", str(TALLY_SCRIPT), "--out", str(TALLY_DIR)],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception as e:
+            return False, f"Could not start the tally: {e}"
+        return True, "Tallying today's log — the numbers appear below in a few seconds."
     return False, "Unknown action."
 
 
@@ -268,6 +290,12 @@ list — its configured name is kept and shown regardless.</p></section>
 
 <section><h2>Recent activity</h2><pre id="recent">…</pre></section>
 <section><h2>Scheduler</h2><pre id="sched">…</pre></section>
+<section><h2>Service tally</h2>
+<div class="row"><button id="runtally" type="button">Run tally now</button>
+<span class="inl" id="tallywhen"></span></div>
+<pre id="tally" style="margin-top:10px">…</pre>
+<p class="hint">Written every night at 23:30 for that day's services; press the
+button for today so far. What each line means is in docs/CHANGES-2026-09-06.md §2.</p></section>
 </main><script>
 function tile(k,v,cls){return '<div class="tile"><div class="k">'+k+'</div><div class="v '+(cls||'')+'">'+v+'</div></div>';}
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');}
@@ -296,6 +324,8 @@ function refresh(){
     w.hidden=!warn; if(warn)w.textContent=warn;
     document.getElementById('recent').textContent=(d.recent||['(nothing yet)']).join('\\n');
     document.getElementById('sched').textContent=(d.scheduler||['(no entries)']).join('\\n');
+    document.getElementById('tally').textContent=(d.tally&&d.tally.text)||'(no tally yet)';
+    document.getElementById('tallywhen').textContent=d.tally?'written '+d.tally.generated:'';
   }).catch(function(){});
 }
 document.querySelector('.actions').addEventListener('click',function(e){
@@ -307,6 +337,13 @@ document.querySelector('.actions').addEventListener('click',function(e){
    .then(function(r){return r.json();}).then(function(d){
      document.getElementById('msg').textContent=d.message||'';
      setTimeout(refresh,1500);
+   }).catch(function(){});
+});
+document.getElementById('runtally').addEventListener('click',function(){
+  fetch('/admin/api/action',{method:'POST',credentials:'same-origin',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'tally'})})
+   .then(function(r){return r.json();}).then(function(d){
+     document.getElementById('msg').textContent=d.message||''; setTimeout(refresh,4000);
    }).catch(function(){});
 });
 // ---- settings: schedule and audio routing --------------------------------

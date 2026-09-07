@@ -132,7 +132,11 @@ worker_pids() {
 worker_running() { [ -n "$(worker_pids)" ]; }
 
 # ---------- backlog side ----------
-if [ "$in_drain" -eq 1 ]; then
+# Only where the sermon-archive project is installed; another church's box
+# has no backlog and must not log a failed launch every five minutes.
+if [ ! -d "$HOME/Multi-Bitrate-Sermons" ]; then
+  :
+elif [ "$in_drain" -eq 1 ]; then
   # Approaching or inside a window: no archive work.
   [ -e "$STOP_FLAG" ] || { touch "$STOP_FLAG"; log "draining backlog before service window"; }
   if [ "$in_live" -eq 1 ] && worker_running; then

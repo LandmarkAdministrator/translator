@@ -1,0 +1,15 @@
+# User unit: ~/.config/systemd/user/translate-tally.timer
+# Enable with: systemctl --user enable --now translate-tally.timer
+#
+# Nightly, after the last window of any day has closed: the day's hard
+# numbers from ~/translate.log into ~/sermons/logs/service-tally/, which the
+# admin panel shows. A day without a service produces a short "no runs" file.
+[Unit]
+Description=Nightly tally of the day's translation services
+
+[Timer]
+OnCalendar=*-*-* 23:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
