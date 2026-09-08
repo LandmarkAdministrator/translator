@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 from pathlib import Path
@@ -132,6 +134,46 @@ def _ensure_program() -> Optional[str]:
     return None
 
 
+BACKLOG_DIR = Path.home() / "Multi-Bitrate-Sermons"
+BACKLOG_UNIT = "lbc-backlog-worker.service"
+WORKER_PAT = r"Multi-Bitrate-Sermons/\.venv/bin/python.*scripts/unified_worker\.py"
+
+
+def _drain_backlog() -> Optional[str]:
+    """Take the GPU back from the sermon-archive worker before a manual start.
+
+    The scheduler drains the worker before every window, but a manual start
+    from this panel sets the override flag that makes the scheduler inert —
+    so it must do the draining itself. One card: live ~7 GiB, worker up to
+    ~10 GiB. The stop flag makes the worker exit after its current job; a
+    manual start cannot wait for that, so the worker is stopped now and the
+    archive pipeline's stale-claim reaper recovers the interrupted row (the
+    same thing the scheduler does at window open). The flag stays set until
+    the schedule is resumed, which is when the worker belongs back.
+    """
+    if not BACKLOG_DIR.is_dir():
+        return None
+    try:
+        (BACKLOG_DIR / "stop.flag").touch()
+    except Exception as e:
+        return f"could not set the archive worker's stop flag ({e})"
+    stopped = 0
+    if _run(["systemctl", "--user", "is-active", BACKLOG_UNIT]) == "active":
+        subprocess.run(["systemctl", "--user", "stop", BACKLOG_UNIT], timeout=30)
+        stopped += 1
+    # Anything launched outside the unit. Only real python processes: a
+    # plain pgrep -f also matches shells whose command line mentions the
+    # pattern (the lesson of 2026-09-06).
+    for pid in _run(["pgrep", "-f", WORKER_PAT]).split():
+        try:
+            if (Path("/proc") / pid / "comm").read_text().strip().startswith("python"):
+                os.kill(int(pid), signal.SIGTERM)
+                stopped += 1
+        except Exception:
+            pass
+    return "archive worker stopped so translation has the GPU" if stopped else None
+
+
 def do_action(name: str) -> tuple[bool, str]:
     """State-changing operations. Deliberately few and explicit.
 
@@ -143,7 +185,7 @@ def do_action(name: str) -> tuple[bool, str]:
     which is why the page warns about it.
     """
     if name == "start":
-        note = _ensure_program()
+        notes = [n for n in (_ensure_program(), _drain_backlog()) if n]
         try:
             OVERRIDE_FLAG.touch()
         except Exception as e:
@@ -151,7 +193,7 @@ def do_action(name: str) -> tuple[bool, str]:
         subprocess.Popen(["systemctl", "--user", "start", "translate.service"])
         msg = ("Starting translation (takes ~40s to load models). The "
                "automatic schedule is PAUSED until you resume it.")
-        return True, (msg + " — " + note) if note else msg
+        return True, (msg + " — " + "; ".join(notes)) if notes else msg
     if name == "restart":
         note = _ensure_program()
         subprocess.Popen(["systemctl", "--user", "restart", "translate.service"])
@@ -276,8 +318,8 @@ done, or services will not start on their own.</p></section>
 <button class="primary" id="savesched" type="button">Save schedule</button></div>
 <p class="hint">Translation starts at the window time, not the service time — it
 needs about a minute to load and the room is quiet beforehand. Archive jobs have
-run up to 40 minutes, so a drain shorter than that can leave one competing for
-the GPU during a service.</p></section>
+run up to 45 minutes, so keep the drain at 45 or more — a shorter one can leave a
+job competing for the GPU during a service.</p></section>
 
 <section><h2>Audio routing</h2>
 <div class="row"><label class="inl">Input <select id="indev"></select></label></div>

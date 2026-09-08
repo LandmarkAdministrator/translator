@@ -15,6 +15,11 @@
 # Also: restarts live translation if it hangs (log silent) or loses its audio
 # output. Manual override: `touch ~/translate-manual.flag` stops this script
 # doing anything at all (for testing); remove it to resume.
+#
+# The worker side honours the contract in docs/BACKLOG-CONTRACT.md, agreed
+# with the sermon-archive project on 2026-09-08: drain rather than kill,
+# force-stop only at window open, relaunch in a systemd unit outside windows,
+# never during a thermal hold, and recover after the weekly reboot.
 set -u
 LOG="$HOME/sermons/logs/translate-window.log"
 UNIT="$HOME/.config/systemd/user/translate.service"
@@ -52,7 +57,7 @@ svc_uptime() {
 TRANSLATE_LOG="$HOME/translate.log"
 WORKER_START="$HOME/Multi-Bitrate-Sermons/scripts/lbc-start-unified-worker.sh"
 STOP_FLAG="$HOME/Multi-Bitrate-Sermons/stop.flag"
-WORKER_PAT="Multi-Bitrate-Sermons/.venv/bin/python.*worker"
+WORKER_PAT="Multi-Bitrate-Sermons/.venv/bin/python.*scripts/unified_worker.py"
 STALL_SECONDS=300          # live log silent this long in-window = hung.
                            # The pipeline writes a HEARTBEAT line every 60 s
                            # from its audio path whether or not anyone is
@@ -148,6 +153,12 @@ elif [ "$in_drain" -eq 1 ]; then
     for pid in $(worker_pids); do kill "$pid" 2>/dev/null; done
     log "backlog still running at window open -> force-stopped (stale claim reaper will recover the row)"
   fi
+elif [ -e "$STOP_FLAG" ] && [ -e "$HOME/.gpu-guard-stopped-backlog" ]; then
+  # Free time, but the thermal guard holds the backlog: it stopped the worker
+  # at 85 C and marked the stop as its own, and it lifts that stop itself
+  # once the card is cool. Removing the flag here meanwhile would relaunch
+  # the worker into a hot GPU every five minutes.
+  log "thermal hold on the backlog (guard marker present) -> left stopped"
 else
   # Free time: let the archive work.
   [ -e "$STOP_FLAG" ] && { rm -f "$STOP_FLAG"; log "outside service windows -> backlog allowed"; }
