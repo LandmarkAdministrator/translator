@@ -294,27 +294,37 @@ GPU Architecture Reference:
 
 ### NVIDIA CUDA Setup
 
+`./install.sh --cuda` does the following. It is the procedure that brought up
+the production host (Debian 13, RTX 3060) on 2026-09-01, after Debian's own
+`nvidia-driver` from non-free failed to build against a backports kernel.
+
+1. **Secure Boot must be off.** DKMS builds an unsigned kernel module and a
+   Secure Boot kernel refuses to load it. `mokutil --sb-state` tells you;
+   disable it in the firmware setup. (AMD is unaffected: amdgpu is in-tree.)
+2. **Headers for the running kernel** (`linux-headers-$(uname -r)`), or the
+   backports kernel and headers together, followed by a reboot.
+3. **NVIDIA's own Debian repository** via `cuda-keyring`, then
+   `nvidia-kernel-open-dkms nvidia-driver nvidia-driver-cuda` — the open
+   module for Turing (RTX 20xx / GTX 16xx) and newer, `--nvidia-proprietary`
+   for older cards. The package blacklists nouveau itself.
+4. **Reboot** and re-run `./install.sh --cuda`: it sees `nvidia-smi` working
+   and continues with the Python environment (torch 2.11 cu128, which needs
+   driver 570 or newer; the repository provides 610).
+
+No CUDA toolkit is installed — the PyTorch wheels carry their own runtime.
+`scripts/gpu_doctor.sh` checks each of these and names the fix for whatever
+is wrong; `install.sh` runs it at the end and `install_site.sh` at the start.
+
+By hand, the same thing is:
+
 ```bash
-# Enable non-free repos (required for nvidia-driver on Debian)
-sudo sed -i 's/main$/main contrib non-free non-free-firmware/' /etc/apt/sources.list
-sudo apt update
-
-# Install the kernel driver only — PyTorch bundles its own CUDA runtime
-sudo apt install -y nvidia-driver firmware-misc-nonfree
-
-# Reboot to load driver
+mokutil --sb-state                       # must say "SecureBoot disabled"
+sudo apt install -y linux-headers-$(uname -r)
+wget https://developer.download.nvidia.com/compute/cuda/repos/debian13/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb && sudo apt update
+sudo apt install -y nvidia-kernel-open-dkms nvidia-driver nvidia-driver-cuda
 sudo reboot
-```
-
-> **Note:** Do not install `nvidia-cuda-toolkit` from apt. PyTorch ships its own CUDA
-> runtime inside the pip wheel, so only the kernel driver is needed.
-
-#### Verify CUDA Installation
-
-```bash
-nvidia-smi
-source venv/bin/activate
-python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+nvidia-smi                               # driver 610.x and the card listed
 ```
 
 ---

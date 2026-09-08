@@ -76,9 +76,9 @@ else ok "repo at $HOME_REPO"; fi
 if [ -x "$REPO/venv/bin/python" ]; then ok "main venv ($("$REPO/venv/bin/python" --version 2>&1))"
 else fail "no main venv at $REPO/venv — run ./install.sh first (drivers, venv, base models)"; fi
 
-if command -v nvidia-smi >/dev/null 2>&1; then ok "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
-elif command -v rocminfo >/dev/null 2>&1; then ok "GPU: ROCm ($(rocminfo 2>/dev/null | grep -m1 'Marketing Name' | sed 's/.*:\s*//'))"; THERMAL=0
-else fail "no GPU tooling found (nvidia-smi / rocminfo); the pipeline refuses to start without a GPU"; fi
+command -v nvidia-smi >/dev/null 2>&1 || THERMAL=0
+if gpu=$("$REPO/scripts/gpu_doctor.sh" --brief 2>&1); then ok "$gpu"
+else fail "$gpu — run scripts/gpu_doctor.sh for every check and its fix"; fi
 
 if systemctl --user show-environment >/dev/null 2>&1; then ok "user systemd reachable"
 else fail "systemctl --user does not work here — log in as the service user over ssh or a console (needs a session bus)"; fi

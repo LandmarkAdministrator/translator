@@ -40,6 +40,9 @@ Target systems must have:
 The tested deployment baseline is:
 - ROCm **7.2.2** (Ubuntu Noble packages, installed on Debian 13 Trixie)
 - PyTorch **2.11.0+rocm7.2** (from `download.pytorch.org/whl/rocm7.2`)
+- NVIDIA host: driver **610.57.04** from NVIDIA's Debian 13 repository as the
+  open DKMS module, kernel **7.1.8+deb13** (backports) with headers, Secure
+  Boot off, PyTorch **2.11.0+cu128** in both venvs
 - Python **3.13** (Debian Trixie system Python)
 - onnxruntime-rocm **1.22.2.post1** (only for the onnx-asr ASR fallback, `--parakeet`)
 - NeMo venv: Python **3.11**, nemo-toolkit **3.0.0**, torch **2.11.0+cu128**

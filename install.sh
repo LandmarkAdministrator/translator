@@ -47,6 +47,14 @@ YES=false
 # Log file
 LOG_FILE="/tmp/church-translator-install.log"
 
+# PyTorch build for the main venv. The NeMo venv pins the same version
+# (requirements-nemo.txt); keep the two together.
+TORCH_VERSION="2.11.0"
+
+# NVIDIA kernel module flavour: the open module (Turing / RTX 20xx / GTX 16xx
+# and newer) unless --nvidia-proprietary.
+NVIDIA_PROPRIETARY=false
+
 #=============================================================================
 # Helper Functions
 #=============================================================================
@@ -97,6 +105,38 @@ confirm() {
 
 command_exists() {
     command -v "$1" &> /dev/null
+}
+
+secure_boot_enabled() {
+    # DKMS builds an unsigned NVIDIA module; a Secure Boot kernel refuses it.
+    # (AMD is unaffected: amdgpu ships inside the kernel.)
+    if command_exists mokutil; then
+        mokutil --sb-state 2>/dev/null | grep -qi "SecureBoot enabled"
+        return
+    fi
+    local f
+    f=$(ls /sys/firmware/efi/efivars/SecureBoot-* 2>/dev/null | head -1)
+    [[ -n "$f" ]] && [[ "$(od -An -tu1 -j4 -N1 "$f" 2>/dev/null | tr -d ' ')" == "1" ]]
+}
+
+reboot_then_rerun() {
+    # $1 = why, $2 = the flags to re-run with. The script is resumable: on
+    # the next run every completed stage detects itself and is skipped.
+    echo ""
+    echo -e "${RED}============================================================${NC}"
+    echo -e "${RED}  REBOOT REQUIRED BEFORE CONTINUING                        ${NC}"
+    echo -e "${RED}============================================================${NC}"
+    echo ""
+    warn "$1."
+    log "After rebooting, run this script again to continue:"
+    echo "  ./install.sh $2"
+    echo ""
+    if confirm "Reboot now?"; then
+        sudo reboot
+    else
+        echo "Please reboot manually, then re-run: ./install.sh $2"
+        exit 0
+    fi
 }
 
 #=============================================================================
@@ -207,7 +247,9 @@ install_system_deps() {
         libsox-fmt-all \
         libopenblas-dev \
         libffi-dev \
-        libssl-dev
+        libssl-dev \
+        mokutil \
+        pciutils
 
     log "System dependencies installed successfully."
 }
@@ -481,63 +523,101 @@ enable_nonfree_repos() {
 install_cuda() {
     header "Installing NVIDIA Driver"
 
-    # Check if driver is already installed
-    if command_exists nvidia-smi; then
+    # Already loaded? Nothing to do — this is what makes the script resumable
+    # after the reboot below.
+    if command_exists nvidia-smi && nvidia-smi >/dev/null 2>&1; then
         local driver_version
-        driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1 || echo "unknown")
-        log "NVIDIA driver already installed: $driver_version"
-        if ! confirm "Reinstall NVIDIA driver?"; then
-            return 0
+        driver_version=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)
+        log "NVIDIA driver already loaded: $driver_version"
+        if [[ "${driver_version%%.*}" -lt 570 ]]; then
+            warn "Driver $driver_version is older than 570; the torch cu128 wheels need 570 or newer."
+            warn "Upgrade from NVIDIA's repository: remove the driver and re-run ./install.sh --cuda."
         fi
+        return 0
     fi
 
-    if [[ "$OS_ID" == "debian" ]]; then
-        # Enable non-free repos first — nvidia-driver won't be found without them
-        enable_nonfree_repos
-
-        log "Installing NVIDIA driver..."
-        # Note: We install the driver only — NOT nvidia-cuda-toolkit from apt.
-        # The apt CUDA toolkit is often outdated. PyTorch and faster-whisper
-        # bundle their own CUDA runtime, so only the driver is needed.
-        sudo apt install -y nvidia-driver firmware-misc-nonfree
-
-    elif [[ "$OS_ID" == "ubuntu" ]]; then
-        # Ubuntu: Use official NVIDIA repo for latest driver
-        local ubuntu_version
+    if [[ "$OS_ID" == "ubuntu" ]]; then
+        # Untested here. NVIDIA's repository and its cuda-drivers meta-package
+        # (the newest driver), same family as the Debian path below.
+        local ubuntu_version cuda_repo_ubuntu="ubuntu2204"
         ubuntu_version=$(echo "$OS_VERSION" | tr -d '.')
-        # Default to 2204 packages which work on 22.04 and 24.04
-        local cuda_repo_ubuntu="ubuntu2204"
-        if [[ "$ubuntu_version" -ge 2404 ]]; then
-            cuda_repo_ubuntu="ubuntu2404"
-        fi
+        [[ "$ubuntu_version" -ge 2404 ]] && cuda_repo_ubuntu="ubuntu2404"
         wget -q "https://developer.download.nvidia.com/compute/cuda/repos/${cuda_repo_ubuntu}/x86_64/cuda-keyring_1.1-1_all.deb"
         sudo dpkg -i cuda-keyring_1.1-1_all.deb
         rm -f cuda-keyring_1.1-1_all.deb
         sudo apt update
-        sudo apt install -y nvidia-driver-550
+        sudo apt install -y cuda-drivers
+        reboot_then_rerun "The NVIDIA module loads at boot" "--cuda"
+        return 0
     fi
 
-    log "NVIDIA driver installation complete."
-    echo ""
-    echo -e "${RED}============================================================${NC}"
-    echo -e "${RED}  REBOOT REQUIRED BEFORE CONTINUING                        ${NC}"
-    echo -e "${RED}============================================================${NC}"
-    echo ""
-    warn "The NVIDIA driver cannot load until you reboot."
-    warn "GPU will NOT be detected by PyTorch until after reboot."
-    echo ""
-    log "After rebooting, run this script again to continue:"
-    echo "  ./install.sh --cuda"
-    echo ""
-    log "The script will detect the driver is installed and skip"
-    log "straight to Python environment and model setup."
-    echo ""
-    if confirm "Reboot now?"; then
-        sudo reboot
-    else
-        echo "Please reboot manually, then re-run: ./install.sh --cuda"
-        exit 0
+    # Debian. This is the procedure that brought up the production host
+    # (Debian 13, RTX 3060, 2026-09-01) after Debian's own nvidia-driver from
+    # non-free failed to build against a backports kernel: NVIDIA's Debian
+    # repository, the open kernel module through DKMS, headers matching the
+    # running kernel, and one reboot.
+
+    # 1. Secure Boot: the module DKMS builds is unsigned; the kernel refuses it.
+    if secure_boot_enabled; then
+        error "Secure Boot is enabled. The NVIDIA kernel module that DKMS builds is unsigned"
+        error "and will not load. Disable Secure Boot in the firmware (BIOS/UEFI) setup,"
+        error "boot again, and re-run: ./install.sh --cuda"
+        exit 1
     fi
+    log "Secure Boot is off."
+
+    # 2. Headers for the running kernel, or DKMS has nothing to build against.
+    if dpkg -s "linux-headers-$(uname -r)" >/dev/null 2>&1; then
+        log "Kernel headers for $(uname -r) present."
+    else
+        log "Installing kernel headers for $(uname -r)..."
+        if ! sudo apt install -y "linux-headers-$(uname -r)"; then
+            # The running kernel's headers are gone from the archive: move to
+            # the current backports kernel and headers together, then return.
+            warn "No headers for the running kernel; installing the backports kernel and headers instead."
+            local backports_file="/etc/apt/sources.list.d/${OS_CODENAME}-backports.list"
+            [[ -f "$backports_file" ]] || echo "deb http://deb.debian.org/debian/ ${OS_CODENAME}-backports main contrib non-free non-free-firmware" | sudo tee "$backports_file"
+            sudo apt update
+            sudo apt install -y -t "${OS_CODENAME}-backports" linux-image-amd64 linux-headers-amd64
+            reboot_then_rerun "The new kernel must be running before the driver module can be built for it" "--cuda"
+        fi
+    fi
+
+    # 3. NVIDIA's repository for this Debian release.
+    local keyring=/usr/share/keyrings/cuda-archive-keyring.gpg
+    if [[ ! -f "$keyring" ]]; then
+        local deb_major="${OS_VERSION%%.*}" tmp
+        tmp=$(mktemp -d)
+        log "Adding NVIDIA's Debian ${deb_major} repository..."
+        if ! wget -qO "$tmp/cuda-keyring.deb" \
+             "https://developer.download.nvidia.com/compute/cuda/repos/debian${deb_major}/x86_64/cuda-keyring_1.1-1_all.deb"; then
+            error "Could not download cuda-keyring for debian${deb_major}."
+            exit 1
+        fi
+        sudo dpkg -i "$tmp/cuda-keyring.deb"
+        rm -rf "$tmp"
+    fi
+    sudo apt update
+
+    # 4. The driver. Open kernel module by default; the package blacklists
+    # nouveau itself (/etc/modprobe.d/nvidia.conf). No CUDA toolkit: the
+    # PyTorch wheels carry their own runtime, only the driver is needed.
+    local kmod="nvidia-kernel-open-dkms"
+    [[ "$NVIDIA_PROPRIETARY" == "true" ]] && kmod="nvidia-kernel-dkms"
+    log "Installing $kmod nvidia-driver nvidia-driver-cuda (DKMS builds the module; a few minutes)..."
+    sudo apt install -y "$kmod" nvidia-driver nvidia-driver-cuda
+
+    # 5. Did DKMS build it for THIS kernel?
+    if /usr/sbin/dkms status 2>/dev/null | grep -q "nvidia.*$(uname -r).*installed"; then
+        log "DKMS built the nvidia module for $(uname -r)."
+    else
+        error "DKMS did not report the nvidia module as installed for $(uname -r):"
+        /usr/sbin/dkms status 2>/dev/null | sed 's/^/    /' || true
+        error "Run: sudo dkms autoinstall   and read /var/lib/dkms/nvidia/*/build/make.log"
+        exit 1
+    fi
+
+    reboot_then_rerun "The NVIDIA module loads at boot; PyTorch cannot see the GPU until then" "--cuda"
 }
 
 #=============================================================================
@@ -545,22 +625,27 @@ install_cuda() {
 #=============================================================================
 
 detect_pytorch_rocm_version() {
-    # Find the latest PyTorch ROCm wheel available at download.pytorch.org.
-    # This ensures the PyTorch wheel matches the installed ROCm version as
-    # closely as possible rather than using a hardcoded (potentially outdated) URL.
+    # The wheel has to match the ROCm that is installed, not the newest one
+    # PyTorch publishes: 7.2.2 in /opt/rocm wants the rocm7.2 wheel. Messages
+    # go to stderr because the caller captures stdout as the answer.
+    if [[ -f /opt/rocm/.info/version ]]; then
+        local installed
+        installed="rocm$(cut -d. -f1-2 /opt/rocm/.info/version)"
+        log "PyTorch ROCm wheel matching the installed ROCm: $installed" >&2
+        echo "$installed"
+        return
+    fi
     local pytorch_rocm=""
-
     if command -v curl &> /dev/null; then
         pytorch_rocm=$(curl -s "https://download.pytorch.org/whl/" 2>/dev/null | \
             grep -oP '(?<=href=")rocm[0-9]+\.[0-9]+(?=/)' | \
             sort -V | tail -1)
     fi
-
     if [[ -n "$pytorch_rocm" ]]; then
-        log "Detected latest PyTorch ROCm wheel: $pytorch_rocm"
+        log "Newest PyTorch ROCm wheel: $pytorch_rocm" >&2
         echo "$pytorch_rocm"
     else
-        warn "Could not detect latest PyTorch ROCm wheel version, using rocm7.2 fallback"
+        warn "Could not detect a PyTorch ROCm wheel version; using rocm7.2" >&2
         echo "rocm7.2"
     fi
 }
@@ -616,20 +701,22 @@ install_python_deps() {
     venv_python pip install -r "$INSTALL_DIR/requirements/base.txt"
 
     # Install GPU-specific dependencies
+    # torch only: nothing here uses torchvision or torchaudio, and the NeMo
+    # venv brings its own torch of the same version.
     case "$GPU_BACKEND" in
         rocm)
-            log "Installing PyTorch with ROCm support..."
             local pytorch_rocm_ver
             pytorch_rocm_ver=$(detect_pytorch_rocm_version)
-            venv_python pip install torch torchvision torchaudio --index-url "https://download.pytorch.org/whl/${pytorch_rocm_ver}"
+            log "Installing PyTorch ${TORCH_VERSION} for ${pytorch_rocm_ver}..."
+            venv_python pip install "torch==${TORCH_VERSION}" --index-url "https://download.pytorch.org/whl/${pytorch_rocm_ver}"
             ;;
         cuda)
-            log "Installing PyTorch with CUDA support..."
-            venv_python pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+            log "Installing PyTorch ${TORCH_VERSION} for CUDA 12.8 (driver 570 or newer)..."
+            venv_python pip install "torch==${TORCH_VERSION}" --index-url https://download.pytorch.org/whl/cu128
             ;;
         cpu)
-            log "Installing PyTorch (CPU only)..."
-            venv_python pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+            log "Installing PyTorch ${TORCH_VERSION} (CPU only)..."
+            venv_python pip install "torch==${TORCH_VERSION}" --index-url https://download.pytorch.org/whl/cpu
             ;;
     esac
 
@@ -913,7 +1000,7 @@ verify_installation() {
     log "Checking Python packages..."
 
     venv_python python -c "import torch; print(f'PyTorch: {torch.__version__}')" || ((errors++))
-    venv_python python -c "import faster_whisper; print('faster-whisper: OK')" || ((errors++))
+    venv_python python -c "import loguru, yaml, numpy; print('base deps: OK')" || ((errors++))
     venv_python python -c "import transformers; print(f'transformers: {transformers.__version__}')" || ((errors++))
     venv_python python -c "import sounddevice; print('sounddevice: OK')" || ((errors++))
 
@@ -929,6 +1016,11 @@ verify_installation() {
             venv_python python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')" || warn "CUDA not detected by PyTorch"
             nvidia-smi 2>/dev/null | head -10 || warn "nvidia-smi not available"
         fi
+    fi
+
+    # The GPU doctor names the fix for anything wrong in the driver stack.
+    if [[ "$NEEDS_REBOOT" != "true" ]]; then
+        "$INSTALL_DIR/scripts/gpu_doctor.sh" || warn "GPU problems reported above — fix them before the site setup."
     fi
 
     # Check audio devices
@@ -961,7 +1053,8 @@ Usage: $0 [OPTIONS]
 Options:
   --rocm          Force AMD ROCm GPU backend
   --cuda          Force NVIDIA CUDA GPU backend
-  --parakeet      Also install onnx-asr + Parakeet ONNX model (streaming backend)
+  --parakeet      Also install onnx-asr + Parakeet ONNX model (the no-NeMo ASR fallback)
+  --nvidia-proprietary  NVIDIA's proprietary kernel module (cards older than Turing / RTX 20xx)
   --dir PATH      Install to specified directory (default: repo directory)
   --skip-models   Skip downloading AI models
   --skip-service  Skip the site layer (scripts/install_site.sh: NeMo venv, units, config)
@@ -998,6 +1091,10 @@ main() {
                 ;;
             --parakeet)
                 INSTALL_PARAKEET=true
+                shift
+                ;;
+            --nvidia-proprietary)
+                NVIDIA_PROPRIETARY=true
                 shift
                 ;;
             --dir)
