@@ -529,7 +529,7 @@ and enables lingering so they run without a login:
 | `translate-web.service` | the page, the WebSocket stream and `/admin`; always on |
 | `translate-window.timer` | the scheduler, every five minutes |
 | `translate-tally.timer` | the nightly service tally at 23:30 |
-| `gpu-thermal-guard.service` | stops translation at 85 °C |
+| `gpu-thermal-guard.service` | optional (`install_site.sh --thermal-guard`): stops translation at 85 °C, for a card with improvised cooling |
 
 ```bash
 systemctl --user status translate.service translate-web.service

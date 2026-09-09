@@ -23,7 +23,7 @@ file. There is no plan to retire the script.
 | Skip if already running; liveness without self-match | the fixed unit name refuses duplicates, and `worker_pids()` matches `Multi-Bitrate-Sermons/.venv/bin/python.*scripts/unified_worker.py` with the comm check |
 | Leave the worker running whenever translation is not scheduled | the free-time branch starts it if it is not running, every tick |
 | Boot recovery (weekly reboot Sun 04:00) | `OnStartupSec=60` on the timer, then every five minutes: the 04:05 tick relaunches the worker |
-| Respect the thermal guard's hold | since 2026-09-08: if `stop.flag` **and** `~/.gpu-guard-stopped-backlog` both exist, the scheduler leaves the flag alone and does not relaunch; the guard lifts its own stop once the card is under 70 °C |
+| Respect the thermal guard's hold | since 2026-09-08: if `stop.flag` **and** `~/.gpu-guard-stopped-backlog` both exist while the guard unit is running, the scheduler leaves the flag alone and does not relaunch; the guard lifts its own stop once the card is under 70 °C. (The guard was retired on the production host on 2026-09-09 when the card got a proper fan; the rule stays for hosts that run it) |
 | A "hands off everything" switch | `~/translate-manual.flag` — unchanged. While it exists the script does nothing at all. The admin panel's Start and Stop set it; "Resume automatic schedule" clears it |
 | Manual translation start must not collide with the worker | since 2026-09-08 the admin panel's Start sets `stop.flag` and stops the worker (unit first, then any comm-validated PID) before starting translation; the worker returns when the schedule is resumed |
 | Greppable state-change log | `~/sermons/logs/translate-window.log` (every decision) and `schedule.log` (launch failures) — unchanged |
@@ -33,6 +33,7 @@ Two things worth knowing on the archive side:
 
 - On a host without `~/Multi-Bitrate-Sermons` the scheduler skips the worker
   logic entirely (other churches have no backlog).
-- The guard also sets `~/translate-manual.flag` when it has to stop a *live*
-  service at 85 °C; that hold is deliberate and needs a person. It goes away
-  with the guard once the card has a proper fan.
+- Where the guard runs, it also sets `~/translate-manual.flag` when it has to
+  stop a *live* service at 85 °C; that hold is deliberate and needs a person.
+  The production host no longer runs it (fan fitted, guard retired
+  2026-09-09), so the card's own thermal protection is the only limit there.

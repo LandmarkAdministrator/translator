@@ -153,11 +153,14 @@ elif [ "$in_drain" -eq 1 ]; then
     for pid in $(worker_pids); do kill "$pid" 2>/dev/null; done
     log "backlog still running at window open -> force-stopped (stale claim reaper will recover the row)"
   fi
-elif [ -e "$STOP_FLAG" ] && [ -e "$HOME/.gpu-guard-stopped-backlog" ]; then
+elif [ -e "$STOP_FLAG" ] && [ -e "$HOME/.gpu-guard-stopped-backlog" ] \
+     && systemctl --user is-active --quiet gpu-thermal-guard.service; then
   # Free time, but the thermal guard holds the backlog: it stopped the worker
   # at 85 C and marked the stop as its own, and it lifts that stop itself
   # once the card is cool. Removing the flag here meanwhile would relaunch
-  # the worker into a hot GPU every five minutes.
+  # the worker into a hot GPU every five minutes. Only a *running* guard can
+  # lift the hold, so a marker left behind by a retired guard is ignored
+  # (the guard was retired on the production host on 2026-09-09).
   log "thermal hold on the backlog (guard marker present) -> left stopped"
 else
   # Free time: let the archive work.

@@ -36,7 +36,7 @@ The units it installs (sources in `systemd/`, scripts in `scripts/ops/`):
 | `translate-web.service` | the page, WebSocket stream and `/admin`; runs all the time |
 | `translate-window.timer` | every five minutes and a minute after boot: `~/bin/translate-window-check.sh` opens and closes the windows in `config/schedule.conf`, restarts a hung pipeline, and manages the archive worker (see [Sharing the GPU](#sharing-the-gpu)) |
 | `translate-tally.timer` | 23:30 nightly: `tests/service_tally.py` writes the day's numbers for the admin panel |
-| `gpu-thermal-guard.service` | warns at 75 °C, stops translation at 85 °C (`--no-thermal-guard` to omit) |
+| `gpu-thermal-guard.service` | optional (`--thermal-guard`): warns at 75 °C, stops translation at 85 °C. Meant for a card with improvised cooling; retired on the reference host on 2026-09-09 once its fan was fitted |
 | `translate-cert-renew.timer` | system unit, 03:20 daily, only with `--tls` |
 
 Site-specific files, all editable afterwards from the admin panel or by hand:

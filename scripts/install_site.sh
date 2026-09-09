@@ -11,15 +11,16 @@
 #   ./scripts/install_site.sh --web-host 0.0.0.0 --trusted-proxies 10.0.0.5
 #   ./scripts/install_site.sh --tls https://ca.example/acme/directory --ca-cert root.crt \
 #                             --domain translate.example.org --email admin@example.org
-#   ./scripts/install_site.sh --no-thermal-guard
+#   ./scripts/install_site.sh --thermal-guard   # only for a card with improvised cooling
 #
 # What it sets up, in order:
 #   1  preflight   repo at ~/translator, main venv, GPU, user systemd, linger
 #   2  NeMo venv   ~/nemo-venv (Python 3.11 via uv) from requirements-nemo.txt
 #   3  config      settings.yaml default if missing; reminders for site.json/schedule.conf
 #   4  admin       ~/.config/translator/admin.json (scrypt), prompted unless --yes
-#   5  scripts     scheduler, launcher, thermal guard into ~/bin; log directories
-#   6  units       translate, translate-web, window timer, tally timer, thermal guard
+#   5  scripts     scheduler, launcher (+ thermal guard if asked) into ~/bin; log directories
+#   6  units       translate, translate-web, window timer, tally timer (+ thermal guard if asked;
+#                  an installed guard is removed when not asked for)
 #   7  TLS         optional: lego + internal CA, system timer at 03:20 (sudo)
 #   8  prefetch    optional: NLLB, the voices, the streaming ASR model
 #   9  verify      tests/test_pipeline_config.py, unit states, next steps
@@ -32,7 +33,7 @@ set -u
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 HOME_REPO="$HOME/translator"
 UNITS="$HOME/.config/systemd/user"
-CHECK=0; YES=0; PREFETCH=0; THERMAL=1
+CHECK=0; YES=0; PREFETCH=0; THERMAL=0   # the guard is opt-in since 2026-09-09 (production card has a real fan)
 WEB_HOST=""; PROXIES=""
 TLS_URL=""; CA_CERT=""; DOMAIN=""; EMAIL=""
 FAILS=0
@@ -42,6 +43,7 @@ while [ $# -gt 0 ]; do
     --check) CHECK=1 ;;
     --yes|-y) YES=1 ;;
     --prefetch) PREFETCH=1 ;;
+    --thermal-guard) THERMAL=1 ;;
     --no-thermal-guard) THERMAL=0 ;;
     --web-host) WEB_HOST="$2"; shift ;;
     --trusted-proxies) PROXIES="$2"; shift ;;
@@ -173,6 +175,15 @@ unit() {  # unit NAME  (copies verbatim when it differs)
 }
 for u in translate.service translate-window.timer translate-window.service translate-tally.timer translate-tally.service; do unit "$u"; done
 [ "$THERMAL" = 1 ] && unit gpu-thermal-guard.service
+if [ "$THERMAL" = 0 ] && [ -e "$UNITS/gpu-thermal-guard.service" ]; then
+  # A guard from an earlier run, not asked for this time: retire it.
+  if [ "$CHECK" = 1 ]; then say "would" "remove gpu-thermal-guard.service (pass --thermal-guard to keep it)"
+  else
+    systemctl --user disable --now gpu-thermal-guard.service >/dev/null 2>&1
+    rm -f "$UNITS/gpu-thermal-guard.service" "$HOME/bin/gpu-thermal-guard.sh" "$HOME/.gpu-guard-stopped-backlog"
+    chg "gpu-thermal-guard.service removed (pass --thermal-guard to keep it)"; CHANGED_UNITS=1
+  fi
+fi
 # translate-web.service carries two site values; keep what is installed
 # unless told otherwise, default to a proxy-less LAN-safe setting on a new box.
 WEB_SRC="$REPO/systemd/translate-web.service"; WEB_DST="$UNITS/translate-web.service"

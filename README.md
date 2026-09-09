@@ -31,9 +31,10 @@ no cloud services.
   e.g. `/?view=live&size=42&theme=dark`. `/?demo=1` plays a canned passage
   for judging the page without a service. An authenticated admin panel
   starts and stops translation and edits the schedule and audio routing.
-- **Runs itself** — service windows from `config/schedule.conf`, a scheduler
-  that starts and stops the service and restarts it on a real hang, and a GPU
-  thermal guard.
+- **Runs itself** — service windows from `config/schedule.conf` (editable in
+  the admin panel), a scheduler that starts and stops the service and
+  restarts it on a real hang; an optional GPU thermal guard for a card with
+  improvised cooling.
 - **Context biasing** — a phrase list (`config/bias_phrases.txt`) of Bible
   books, KJV forms and local names boosts them inside the decoder.
 - **Fully offline** after setup; **open source** throughout.
