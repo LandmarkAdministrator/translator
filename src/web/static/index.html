@@ -55,7 +55,28 @@
   #listen[aria-pressed="true"] { background: var(--accent); color: #fff; }
   .size { display: flex; gap: 4px; }
   .size button { padding: 6px 11px; font-weight: 600; }
+  #help {
+    font: inherit; font-size: 15px; font-weight: 700; width: 32px; height: 32px; padding: 0;
+    border-radius: 999px; cursor: pointer; border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  }
   #status { font-size: 12px; color: var(--muted); }
+  /* Help: what each control does, in the language being read. A <dialog> so
+     it sits above the pane on every screen size and closes with Esc. */
+  #helpdlg {
+    border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--ink);
+    padding: 18px 20px 14px; width: min(32rem, 92vw); font-size: 15px; line-height: 1.5;
+    box-shadow: 0 8px 40px rgba(0,0,0,.35); max-height: 88dvh; overflow-y: auto;
+  }
+  #helpdlg::backdrop { background: rgba(0,0,0,.45); }
+  #helpdlg h2 { font-size: 17px; margin: 0 0 6px; }
+  #helpdlg h2:focus { outline: none; }   /* focused on open only to keep the panel scrolled to the top */
+  #helpdlg dl { margin: 0; }
+  #helpdlg dt { font-weight: 600; margin-top: 12px; }
+  #helpdlg dd { margin: 2px 0 0; opacity: .85; }
+  #helpdlg .close {
+    display: block; margin: 18px 0 0 auto; font: inherit; font-size: 14px; padding: 7px 18px;
+    border-radius: 999px; cursor: pointer; border: 1px solid var(--accent); background: var(--accent); color: #fff;
+  }
   #phones {
     flex: none; margin: 0; padding: 8px 14px; font-size: 13px; text-align: center;
     color: var(--accent); background: var(--accent-soft); border-bottom: 1px solid var(--line);
@@ -118,6 +139,7 @@
     <button id="fminus" aria-label="Smaller text" title="Smaller text">A−</button>
     <button id="fplus" aria-label="Larger text" title="Larger text">A+</button>
   </div>
+  <button id="help" aria-label="Help" title="What the buttons do">?</button>
   <span id="status">connecting…</span>
 </header>
 <p id="phones" hidden></p>
@@ -132,6 +154,11 @@
   <button id="jump" hidden>↓ Live</button>
   <button id="tap" hidden>🔊</button>
 </main>
+<dialog id="helpdlg" aria-labelledby="help-title">
+  <h2 id="help-title"></h2>
+  <dl id="help-list"></dl>
+  <button class="close" id="help-close"></button>
+</dialog>
 <footer id="foot">live machine translation</footer>
 <script>
 (function () {
@@ -349,10 +376,79 @@
     phonesEl.textContent = s.phones;
     phonesEl.hidden = !s.phones || live === false;
     viewNav.hidden = lang !== "en";
+    jumpBtn.textContent = s.jump || "↓ Live";
     $("sb-title").textContent = s.sbTitle;
     $("sb-body").textContent = s.sbBody;
     $("sb-times").innerHTML = TIMES[lang] || TIMES.en;
+    showStatus(statusKey);
   }
+
+  // ---- status word, in the language being read ---------------------------
+  var statusKey = "connecting";
+  function showStatus(key) {
+    statusKey = key;
+    var s = STRINGS[lang] || STRINGS.en || {};
+    var words = { live: s.stLive || "live", standby: s.stStandby || "standby",
+                  reconnecting: s.stReconnecting || "reconnecting…", connecting: "connecting…", demo: "demo" };
+    statusEl.textContent = words[key] || key;
+  }
+
+  // ---- help: what each control does -----------------------------------------
+  // Wording comes from site.json (strings.help per language); these English
+  // texts fill in for a site file that predates the panel. The labels are the
+  // controls' own current labels, so the panel always matches the header.
+  var HELP_EN = {
+    title: "How to use this page",
+    langs: "Choose the language you want to read. The text switches at once.",
+    views: "English only. Sentences shows each finished sentence, the same text that is translated. Live shows the words as they are recognized, a few seconds sooner; they can still change until the sentence ends.",
+    listen: "Plays the translation out loud on this device. Please use headphones. Tap again to stop.",
+    size: "Smaller or larger text. This device remembers your choice.",
+    jump: "Appears when you scroll up to reread. Tap it to return to the newest text.",
+    live: "A service is being translated right now.",
+    standby: "No service is in progress. The text starts by itself when one begins.",
+    reconnecting: "The connection dropped. The page keeps trying on its own; nothing to do.",
+    close: "Close"
+  };
+  var helpDlg = $("helpdlg");
+  function helpText(key) {
+    var s = STRINGS[lang] || STRINGS.en || {};
+    return (s.help && s.help[key]) || HELP_EN[key] || "";
+  }
+  function openHelp() {
+    var s = STRINGS[lang] || STRINGS.en || {};
+    var labels = [], anyAudio = false, hasEn = false;
+    LANGS.forEach(function (l) { labels.push(l.label); if (l.audio) anyAudio = true; if (l.code === "en") hasEn = true; });
+    var rows = [[labels.join(" · ") || "English", helpText("langs")]];
+    if (hasEn) rows.push(["Sentences / Live", helpText("views")]);
+    if (anyAudio) rows.push([s.listen || "🔊 Listen", helpText("listen")]);
+    rows.push(["A− / A+", helpText("size")],
+              [s.jump || "↓ Live", helpText("jump")],
+              [s.stLive || "live", helpText("live")],
+              [s.stStandby || "standby", helpText("standby")],
+              [s.stReconnecting || "reconnecting…", helpText("reconnecting")]);
+    $("help-title").textContent = helpText("title");
+    var dl = $("help-list");
+    dl.textContent = "";
+    rows.forEach(function (r) {
+      var dt = document.createElement("dt"), dd = document.createElement("dd");
+      dt.textContent = r[0]; dd.textContent = r[1];
+      dl.appendChild(dt); dl.appendChild(dd);
+    });
+    $("help-close").textContent = helpText("close");
+    if (helpDlg.showModal) helpDlg.showModal(); else helpDlg.setAttribute("open", "");
+    // showModal() focuses the first focusable control — the Close button at
+    // the bottom — and scrolls it into view, hiding the title on a phone.
+    var title = $("help-title");
+    title.setAttribute("tabindex", "-1");
+    try { title.focus({ preventScroll: true }); } catch (e) { title.focus(); }
+    helpDlg.scrollTop = 0;
+  }
+  function closeHelp() {
+    if (helpDlg.close) helpDlg.close(); else helpDlg.removeAttribute("open");
+  }
+  $("help").addEventListener("click", openHelp);
+  $("help-close").addEventListener("click", closeHelp);
+  helpDlg.addEventListener("click", function (e) { if (e.target === helpDlg) closeHelp(); });
 
   // ---- live / standby ---------------------------------------------------
   // The server stays up between services, so "connected" and "a service is
@@ -366,7 +462,7 @@
     standbyEl.hidden = on;
     scroller.hidden = !on;
     applyLang();
-    statusEl.textContent = on ? "live" : "standby";
+    showStatus(on ? "live" : "standby");
     if (on && autoAudio && !listening) startAudio();
     if (!on) {
       // Drop the finished service's transcript so the next one starts clean.
@@ -382,7 +478,7 @@
   function connect() {
     var ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
     ws.binaryType = "arraybuffer";
-    ws.onopen = function () { statusEl.textContent = "live"; retry = 1000; };
+    ws.onopen = function () { showStatus(live === false ? "standby" : "live"); retry = 1000; };
     ws.onmessage = function (m) {
       if (typeof m.data === "string") {
         try { onEvent(JSON.parse(m.data), null); } catch (e) {}
@@ -394,7 +490,7 @@
       }
     };
     ws.onclose = function () {
-      statusEl.textContent = "reconnecting…";
+      showStatus("reconnecting");
       setTimeout(connect, retry);
       retry = Math.min(retry * 2, 15000);
     };
@@ -434,7 +530,7 @@
       })();
     }
     setLive(true);
-    statusEl.textContent = "demo";
+    showStatus("demo");
     nextSentence();
   }
 

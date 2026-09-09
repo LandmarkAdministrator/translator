@@ -1,5 +1,5 @@
 {
-  "_comment": "Per-site configuration. Everything here is congregation-specific; the code reads it so a new deployment edits this file instead of the source. Served to the web page at /config.json.",
+  "_comment": "Per-site configuration. Everything here is congregation-specific; the code reads it so a new deployment edits this file instead of the source. Served to the web page at /config.json. Under each language, `strings` labels the page's controls in that language and `strings.help` is the text behind the ? button; a missing key falls back to the English built into the page.",
 
   "church_name": "Landmark Baptist Church",
   "app_name": "Live Translation",
@@ -20,8 +20,24 @@
         "listen": "🔊 Listen",
         "listening": "🔊 Listening",
         "phones": "",
+        "jump": "↓ Live",
+        "stLive": "live",
+        "stStandby": "standby",
+        "stReconnecting": "reconnecting…",
         "sbTitle": "No service in progress",
-        "sbBody": "Live translation will appear here automatically when the service begins."
+        "sbBody": "Live translation will appear here automatically when the service begins.",
+        "help": {
+          "title": "How to use this page",
+          "langs": "Choose the language you want to read. The text switches at once.",
+          "views": "English only. Sentences shows each finished sentence, the same text that is translated. Live shows the words as they are recognized, a few seconds sooner; they can still change until the sentence ends.",
+          "listen": "Plays the translation out loud on this device. Please use headphones. Tap again to stop.",
+          "size": "Smaller or larger text. This device remembers your choice.",
+          "jump": "Appears when you scroll up to reread. Tap it to return to the newest text.",
+          "live": "A service is being translated right now.",
+          "standby": "No service is in progress. The text starts by itself when one begins.",
+          "reconnecting": "The connection dropped. The page keeps trying on its own; nothing to do.",
+          "close": "Close"
+        }
       }
     },
     {
@@ -32,8 +48,24 @@
         "listen": "🔊 Escuchar",
         "listening": "🔊 Escuchando",
         "phones": "Usa audífonos para no molestar a los demás.",
+        "jump": "↓ En vivo",
+        "stLive": "en vivo",
+        "stStandby": "en espera",
+        "stReconnecting": "reconectando…",
         "sbTitle": "No hay servicio en este momento",
-        "sbBody": "La traducción en vivo aparecerá aquí automáticamente cuando comience el servicio."
+        "sbBody": "La traducción en vivo aparecerá aquí automáticamente cuando comience el servicio.",
+        "help": {
+          "title": "Cómo usar esta página",
+          "langs": "Elija el idioma que quiere leer. El texto cambia de inmediato.",
+          "views": "Solo en inglés. Sentences muestra cada oración terminada, el mismo texto que se traduce. Live muestra las palabras según se reconocen, unos segundos antes; pueden cambiar hasta que termina la oración.",
+          "listen": "Reproduce la traducción en voz alta en este dispositivo. Use audífonos. Toque de nuevo para detener.",
+          "size": "Texto más pequeño o más grande. Este dispositivo recuerda su elección.",
+          "jump": "Aparece cuando sube para releer. Tóquelo para volver al texto más reciente.",
+          "live": "Se está traduciendo un servicio en este momento.",
+          "standby": "No hay servicio en este momento. El texto empieza solo cuando comienza uno.",
+          "reconnecting": "Se perdió la conexión. La página sigue intentando por sí sola; no hay que hacer nada.",
+          "close": "Cerrar"
+        }
       }
     },
     {
@@ -44,8 +76,24 @@
         "listen": "🔊 Koute",
         "listening": "🔊 Ap koute",
         "phones": "Tanpri sèvi ak ekoutè pou ou pa deranje lòt moun.",
+        "jump": "↓ An dirèk",
+        "stLive": "an dirèk",
+        "stStandby": "an atant",
+        "stReconnecting": "ap rekonekte…",
         "sbTitle": "Pa gen sèvis kounye a",
-        "sbBody": "Tradiksyon an dirèk ap parèt isit la otomatikman lè sèvis la kòmanse."
+        "sbBody": "Tradiksyon an dirèk ap parèt isit la otomatikman lè sèvis la kòmanse.",
+        "help": {
+          "title": "Kijan pou itilize paj sa a",
+          "langs": "Chwazi lang ou vle li a. Tèks la chanje tousuit.",
+          "views": "Pou angle sèlman. Sentences montre chak fraz ki fini, menm tèks yo tradui a. Live montre mo yo pandan y ap rekonèt yo, kèk segonn pi bonè; yo ka chanje toujou jiskaske fraz la fini.",
+          "listen": "Li fè tradiksyon an sonnen sou aparèy sa a. Tanpri sèvi ak ekoutè. Peze ankò pou kanpe l.",
+          "size": "Tèks pi piti oswa pi gwo. Aparèy sa a sonje chwa ou.",
+          "jump": "Li parèt lè ou monte pou reli. Peze l pou tounen sou dènye tèks la.",
+          "live": "Y ap tradui yon sèvis kounye a.",
+          "standby": "Pa gen sèvis kounye a. Tèks la ap kòmanse poukont li lè yon sèvis kòmanse.",
+          "reconnecting": "Koneksyon an te koupe. Paj la ap kontinye eseye poukont li; ou pa bezwen fè anyen.",
+          "close": "Fèmen"
+        }
       }
     },
     {
@@ -56,8 +104,24 @@
         "listen": "🔊 Слушать",
         "listening": "🔊 Идёт воспроизведение",
         "phones": "Пожалуйста, используйте наушники, чтобы не беспокоить окружающих.",
+        "jump": "↓ Сейчас",
+        "stLive": "в эфире",
+        "stStandby": "ожидание",
+        "stReconnecting": "переподключение…",
         "sbTitle": "Сейчас служения нет",
-        "sbBody": "Перевод в реальном времени появится здесь автоматически, когда начнётся служение."
+        "sbBody": "Перевод в реальном времени появится здесь автоматически, когда начнётся служение.",
+        "help": {
+          "title": "Как пользоваться этой страницей",
+          "langs": "Выберите язык, на котором хотите читать. Текст переключается сразу.",
+          "views": "Только для английского. Sentences показывает каждое законченное предложение — тот же текст, который переводится. Live показывает слова по мере распознавания, на несколько секунд раньше; они могут меняться, пока предложение не закончится.",
+          "listen": "Воспроизводит перевод вслух на этом устройстве. Пожалуйста, используйте наушники. Нажмите ещё раз, чтобы остановить.",
+          "size": "Мельче или крупнее текст. Устройство запомнит ваш выбор.",
+          "jump": "Появляется, когда вы прокрутили вверх, чтобы перечитать. Нажмите, чтобы вернуться к самому новому тексту.",
+          "live": "Сейчас идёт перевод служения.",
+          "standby": "Служения сейчас нет. Текст появится сам, когда оно начнётся.",
+          "reconnecting": "Связь прервалась. Страница сама пытается подключиться снова; ничего делать не нужно.",
+          "close": "Закрыть"
+        }
       }
     }
   ]

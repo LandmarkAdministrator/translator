@@ -25,7 +25,9 @@ no cloud services.
   (it shows a standby notice between services). English has two views —
   *Sentences* (what is translated) and *Live* (the recognizer's words, a few
   seconds earlier) — text scrolls up smoothly as new lines arrive, and the
-  type size is adjustable; a TV in the auditorium is set up once by URL,
+  type size is adjustable; a **?** button explains every control in the
+  language being read (wording in `config/site.json`). A TV in the
+  auditorium is set up once by URL,
   e.g. `/?view=live&size=42&theme=dark`. `/?demo=1` plays a canned passage
   for judging the page without a service. An authenticated admin panel
   starts and stops translation and edits the schedule and audio routing.
