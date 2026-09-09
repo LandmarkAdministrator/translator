@@ -1,623 +1,199 @@
-# Church Audio Translator - Deployment Guide
+# Deployment
 
-Guide for deploying the Church Audio Translator to production systems.
+How a serving machine is built, updated, backed up and diagnosed. The
+reference installation is the production host described at the end; the
+same two scripts build any other.
 
-## Table of Contents
-
-- [Deployment Overview](#deployment-overview)
-- [Creating a Deployment Package](#creating-a-deployment-package)
-- [Fresh System Deployment](#fresh-system-deployment)
-- [Cloning an Existing Installation](#cloning-an-existing-installation)
-- [Multi-System Deployment](#multi-system-deployment)
-- [Post-Deployment Configuration](#post-deployment-configuration)
-- [Updating Deployments](#updating-deployments)
-- [Backup and Recovery](#backup-and-recovery)
-
----
-
-## Deployment Overview
-
-### Deployment Methods
-
-| Method | Best For | Includes Models | Disk Usage |
-|--------|----------|-----------------|------------|
-| Fresh Install | New systems | Downloads during install | ~10GB |
-| Full Package | Air-gapped systems | Yes | ~8GB package |
-| Code Only | Systems with internet | Downloads during install | ~50MB package |
-| Clone | Identical hardware | Yes | ~10GB |
-
-### System Requirements
-
-Target systems must have:
-- Debian 13 (Trixie) or compatible
-- 8GB+ RAM
-- 10GB free disk space
-- Audio input/output devices
-- (Optional) AMD GPU with ROCm 7.2.2 or NVIDIA GPU with CUDA 12.x
-
-### Baseline Software Versions
-
-The tested deployment baseline is:
-- ROCm **7.2.2** (Ubuntu Noble packages, installed on Debian 13 Trixie)
-- PyTorch **2.11.0+rocm7.2** (from `download.pytorch.org/whl/rocm7.2`)
-- NVIDIA host: driver **610.57.04** from NVIDIA's Debian 13 repository as the
-  open DKMS module, kernel **7.1.8+deb13** (backports) with headers, Secure
-  Boot off, PyTorch **2.11.0+cu128** in both venvs
-- Python **3.13** (Debian Trixie system Python)
-- onnxruntime-rocm **1.22.2.post1** (only for the onnx-asr ASR fallback, `--parakeet`)
-- NeMo venv: Python **3.11**, nemo-toolkit **3.0.0**, torch **2.11.0+cu128**
-  (`requirements-nemo.txt`, frozen from the RTX 3060 host)
+- [What a serving machine consists of](#what-a-serving-machine-consists-of)
+- [Fresh machine](#fresh-machine)
+- [Updating a running site](#updating-a-running-site)
+- [Rollback](#rollback)
+- [Backup and recovery](#backup-and-recovery)
+- [Diagnosis](#diagnosis)
+- [Sharing the GPU](#sharing-the-gpu)
+- [The reference host](#the-reference-host)
 
 ---
 
-## Creating a Deployment Package
+## What a serving machine consists of
 
-### Full Package (with Models)
+Two layers, two scripts:
 
-Creates a complete package including all models (~8GB):
+| Layer | Script | Puts in place |
+|---|---|---|
+| Operating system | `./install.sh --cuda` or `--rocm` | Debian repositories, GPU driver (the NVIDIA procedure in `docs/SETUP.md`), system packages, the main venv (`venv/`, Python 3.13, torch 2.11), base models; calls `install_site.sh` at the end |
+| Site | `scripts/install_site.sh` | the NeMo venv for the streaming ASR (`~/nemo-venv`, Python 3.11 via uv, `requirements-nemo.txt`), a default `config/settings.yaml`, the admin password (`~/.config/translator/admin.json`, scrypt), the scheduler / launcher / thermal guard in `~/bin`, every systemd unit, linger, optionally TLS from an internal CA and a full model prefetch, then a verification |
 
-```bash
-cd /home/$USER/translator
+`install_site.sh` is idempotent — run it after every `git pull` and it changes
+only what differs, reporting each step as ok / changed / skipped / FAILED.
+`--check` reports without changing anything.
 
-tar -czf translator-full.tar.gz \
-    --exclude='venv' \
-    --exclude='.venv' \
-    --exclude='__pycache__' \
-    --exclude='*.pyc' \
-    --exclude='logs/*' \
-    --exclude='.git' \
-    src/ scripts/ config/ docs/ models/ requirements/ \
-    install.sh run.py README.md
-```
+The units it installs (sources in `systemd/`, scripts in `scripts/ops/`):
 
-### Code-Only Package (without Models)
+| Unit | Role |
+|---|---|
+| `translate.service` | the pipeline; started and stopped by the scheduler inside service windows, never enabled at boot; `Restart=always` brings it back if its ASR backend dies |
+| `translate-web.service` | the page, WebSocket stream and `/admin`; runs all the time |
+| `translate-window.timer` | every five minutes and a minute after boot: `~/bin/translate-window-check.sh` opens and closes the windows in `config/schedule.conf`, restarts a hung pipeline, and manages the archive worker (see [Sharing the GPU](#sharing-the-gpu)) |
+| `translate-tally.timer` | 23:30 nightly: `tests/service_tally.py` writes the day's numbers for the admin panel |
+| `gpu-thermal-guard.service` | warns at 75 °C, stops translation at 85 °C (`--no-thermal-guard` to omit) |
+| `translate-cert-renew.timer` | system unit, 03:20 daily, only with `--tls` |
 
-Creates a smaller package (~50MB), models download during install:
+Site-specific files, all editable afterwards from the admin panel or by hand:
 
-```bash
-tar -czf translator-code.tar.gz \
-    --exclude='venv' \
-    --exclude='.venv' \
-    --exclude='__pycache__' \
-    --exclude='*.pyc' \
-    --exclude='logs/*' \
-    --exclude='.git' \
-    --exclude='models/*' \
-    src/ scripts/ config/ docs/ requirements/ \
-    install.sh run.py README.md
-```
-
-### Models-Only Package
-
-For updating models on existing installations:
-
-```bash
-tar -czf translator-models.tar.gz models/
-```
+| File | Holds | In git? |
+|---|---|---|
+| `config/site.json` | church name, service times, languages offered on the page and every string the page shows | yes |
+| `config/schedule.conf` | service windows, drain lead time | yes |
+| `config/bias_phrases.txt` | phrases boosted inside the ASR decoder (Bible books, local names) | yes |
+| `config/settings.yaml` | audio input, per-language output device and channel | **no** (machine-specific) |
+| `~/.config/translator/admin.json` | admin password hash | no |
+| `/etc/lego/` | ACME settings, CA certificate, issued certificate | no |
 
 ---
 
-## Fresh System Deployment
+## Fresh machine
 
-### Step 1: Prepare Target System
-
-On the target Debian 13 system:
-
-```bash
-# Enable required repos (if not already)
-sudo sed -i 's/main$/main contrib non-free non-free-firmware/' /etc/apt/sources.list
-
-# Install minimal requirements
-sudo apt update
-sudo apt install -y git curl wget
-```
-
-### Step 2: Transfer Package
+Debian 13, a supported GPU, the audio interface plugged in, the user in
+`sudo`. Secure Boot off for NVIDIA (the DKMS module is unsigned).
 
 ```bash
-# Option A: SCP from source system
-scp translator-full.tar.gz user@target:/home/user/
-
-# Option B: Download from shared location
-wget https://your-server/translator-full.tar.gz
-
-# Option C: Clone from git (internet required)
+cd ~
 git clone https://github.com/LandmarkAdministrator/translator.git translator
-```
-
-### Step 3: Extract and Install
-
-```bash
-cd /home/$USER
-tar -xzf translator-full.tar.gz -C translator/
 cd translator
-
-# Run installer with GPU detection
-./install.sh
-
-# Or specify GPU type
-./install.sh --rocm              # AMD GPU (ROCm 7.2.2 + PyTorch 2.11 rocm7.2)
-./install.sh --cuda              # NVIDIA GPU
-
-# Include the Parakeet streaming backend (onnxruntime-rocm + onnx-asr model)
-./install.sh --rocm --parakeet
+./install.sh --cuda            # or --rocm; NVIDIA needs one reboot in the middle — re-run afterwards
+./scripts/install_site.sh --web-host 0.0.0.0        # LAN page; add --trusted-proxies <ip> behind a reverse proxy
+./scripts/install_site.sh --prefetch                # every model now (~8 GB), so the first service never downloads
+scripts/gpu_doctor.sh                               # must end with "GPU stack is healthy."
 ```
 
-`--parakeet` installs the onnx-asr Parakeet TDT model, the ASR fallback used
-when `PARAKEET_MODEL` is not `unified-remote`. Production runs the NeMo model
-from a second venv (`python3.11 -m venv ~/nemo-venv && ~/nemo-venv/bin/pip
-install -r requirements-nemo.txt`); see README.md. The fallback can also be
-installed later by running `./scripts/install_parakeet.sh` inside the project
-venv.
+Then:
 
-### Step 4: Configure Audio
+1. Sign in to `http://<host>:8080/admin`, pick the audio input and each
+   language's output, save; set the service windows.
+2. Edit `config/site.json`: church name, service times, the languages and
+   their page wording.
+3. `./venv/bin/python tests/test_pipeline_config.py` — the pre-service check.
+4. A dry run outside a window: `~/bin/start-translate-unified & sleep 120; kill %1`,
+   then `grep -a "protocol 2\|HEARTBEAT" ~/translate.log` must show both.
+5. Public access, if wanted: a reverse proxy on another machine forwards to
+   port 8080 (WebSocket upgrades pass through a plain `reverse_proxy`), or
+   `install_site.sh --tls …` for a certificate from an internal CA.
 
-```bash
-source venv/bin/activate
-
-# List available devices
-python run.py --list-devices
-
-# Run interactive setup
-python run.py --setup
-```
-
-### Step 5: Test
-
-```bash
-# Test all components
-python run.py --test
-
-# Test translation
-python run.py --verbose
-# Speak into microphone, verify output
-```
-
-### Step 6: Install Service
-
-```bash
-./scripts/install_service.sh install
-systemctl --user start church-translator
-systemctl --user status church-translator
-```
+Things the fresh-machine path has **not** yet been through: it has only run
+on the two existing machines (item 3 in `TODO.md`); on ROCm hosts the NeMo
+venv is still made by hand (`docs/SETUP.md`).
 
 ---
 
-## Cloning an Existing Installation
+## Updating a running site
 
-For deploying to identical hardware (same GPU, similar audio):
-
-### On Source System
-
-```bash
-cd /home/$USER
-
-# Create complete archive including venv
-tar -czf translator-clone.tar.gz \
-    --exclude='logs/*' \
-    --exclude='__pycache__' \
-    --exclude='*.pyc' \
-    translator/
-```
-
-### On Target System
+The production checkout is a plain clone tracking `origin/master`. Outside a
+service window:
 
 ```bash
-cd /home/$USER
-tar -xzf translator-clone.tar.gz
-
-cd translator
-
-# Install system dependencies and verify GPU
-# (The venv and models are already included in the clone)
-source venv/bin/activate
-python run.py --test
-
-# Reconfigure audio devices (usually different)
-python run.py --setup
-
-# Install service
-./scripts/install_service.sh install
+cd ~/translator
+git pull --ff-only
+./scripts/install_site.sh --yes          # copies changed scripts/units, restarts translate-web only if its unit changed
+./venv/bin/python tests/test_pipeline_config.py
 ```
 
-**Note:** Cloning only works between systems with the same:
-- CPU architecture (x86_64)
-- GPU type (AMD ROCm / NVIDIA CUDA / CPU)
-- Python version
+What needs what:
+
+| Changed | Takes effect |
+|---|---|
+| the page (`src/web/static/`), `config/site.json` | on the next request — nothing to restart |
+| `src/web/*.py` (server, admin) | `systemctl --user restart translate-web.service` (a two-second page reconnect) |
+| pipeline code, `scripts/run_production.sh` | at the next scheduled start; an admin-panel Start does the same |
+| `scripts/ops/*`, `systemd/*` | `install_site.sh` copies them and reloads; the scheduler picks its new copy up on its next tick |
+| `requirements*.txt` | `./install.sh` (main venv) or delete and recreate `~/nemo-venv` via `install_site.sh` |
+
+`translate.service` is never restarted by an update; the scheduler also
+restores its `ExecStart` every five minutes, so a different program cannot be
+started there by accident.
 
 ---
 
-## Multi-System Deployment
-
-For deploying to multiple church locations or venues:
-
-### Create Base Configuration
+## Rollback
 
 ```bash
-# On master system, create a base preset
-mkdir -p config/deployments/
-
-# Create location-specific presets
-cat > config/deployments/main_sanctuary.yaml << 'EOF'
-preset:
-  name: Main Sanctuary
-  description: Primary worship space
-
-audio_input:
-  device: "USB Audio Device"
-
-languages:
-  spanish:
-    enabled: true
-    output_device: "5"
-  haitian_creole:
-    enabled: true
-    output_device: "6"
-EOF
+cd ~/translator
+git log --oneline -10                     # find the last good commit
+git checkout <commit>
+./scripts/install_site.sh --yes           # puts that revision's scripts and units back
 ```
 
-### Deployment Script
-
-Create a deployment script for consistency:
-
-```bash
-#!/bin/bash
-# deploy.sh - Deploy translator to remote system
-
-TARGET_HOST="$1"
-TARGET_USER="${2:-administrator}"
-GPU_TYPE="${3:-rocm}"     # rocm | cuda
-PARAKEET="${4:-}"          # set to "yes" to include Parakeet backend
-
-if [[ -z "$TARGET_HOST" ]]; then
-    echo "Usage: $0 <hostname> [username] [rocm|cuda] [yes-for-parakeet]"
-    exit 1
-fi
-
-INSTALL_FLAGS="--$GPU_TYPE"
-[[ "$PARAKEET" == "yes" ]] && INSTALL_FLAGS="$INSTALL_FLAGS --parakeet"
-
-# Create package
-echo "Creating deployment package..."
-tar -czf /tmp/translator-deploy.tar.gz \
-    --exclude='venv' --exclude='.venv' \
-    --exclude='__pycache__' --exclude='logs/*' \
-    -C /home/$USER translator/
-
-# Transfer
-echo "Transferring to $TARGET_HOST..."
-scp /tmp/translator-deploy.tar.gz "$TARGET_USER@$TARGET_HOST:/home/$TARGET_USER/"
-
-# Install remotely
-echo "Installing on $TARGET_HOST..."
-ssh "$TARGET_USER@$TARGET_HOST" << EOF
-cd /home/$TARGET_USER
-tar -xzf translator-deploy.tar.gz
-cd translator
-./install.sh $INSTALL_FLAGS
-./scripts/install_service.sh install
-EOF
-
-echo "Deployment complete. Configure audio devices on target system."
-```
+`git checkout master && git pull --ff-only` returns to the tip. The ASR
+protocol change of 2026-09-06 needs no coordination — either side of the
+pipe works with the other.
 
 ---
 
-## Post-Deployment Configuration
+## Backup and recovery
 
-### Audio Device Mapping
+Everything that is code or shared configuration is in git. What is not:
 
-Audio device indices vary between systems. After deployment:
+| What | Where | Recovery |
+|---|---|---|
+| audio device settings | `config/settings.yaml` | re-pick in `/admin` (two minutes), or restore the file |
+| admin password | `~/.config/translator/admin.json` | `./venv/bin/python scripts/set_admin_password.py` |
+| TLS | `/etc/lego/` | `install_site.sh --tls …` re-issues |
+| models (~8 GB) | `~/.cache/huggingface`, `models/` | `install_site.sh --prefetch` re-downloads |
+| logs and tallies | `~/translate.log`, `~/translator/logs/`, `~/sermons/logs/` | not needed to run |
 
-```bash
-# Discover devices on the new system
-python run.py --list-devices
+A copy of the three small files is enough to rebuild a machine from git in
+under an hour plus download time. The sermon archive on the same host has its
+own backups (a Synology NAS and two USB drives, weekly on Friday 03:00) and is
+not part of this project.
 
-# Re-run the interactive setup to select the correct input/output devices.
-# This writes config/settings.yaml.
-python run.py --setup
-```
-
-### Environment Variables
-
-For AMD GPUs, you may need to set HSA override:
-
-```bash
-# Check GPU architecture
-/opt/rocm/bin/rocminfo | grep "Name:"
-
-# Create environment file if needed
-echo 'HSA_OVERRIDE_GFX_VERSION=11.0.0' > .env.rocm
-```
-
-### Test Configuration
-
-```bash
-# Verify GPU is working
-python run.py --test
-
-# Test with actual audio
-python run.py --verbose
-# Verify transcription and translation output
-```
+Full recovery on new hardware is the [Fresh machine](#fresh-machine) procedure
+with those files restored before the first `install_site.sh`.
 
 ---
 
-## Updating Deployments
+## Diagnosis
 
-### Code Updates
+| Question | Where to look |
+|---|---|
+| Is the GPU stack sound? | `scripts/gpu_doctor.sh` — one check per known failure, each with its fix |
+| Did the service run, and how well? | `/admin` → the nightly tally, or `ssh host 'python3 -' < tests/service_tally.py` for today |
+| Why did the scheduler do that? | `~/sermons/logs/translate-window.log` (every decision), `schedule.log` (launch failures) |
+| Is the pipeline alive? | `~/translate.log`: a `HEARTBEAT` line every 60 s, `ERROR` lines for real failures; `journalctl --user -u translate.service` |
+| The page? | `journalctl --user -u translate-web.service`; `tests/web_smoke.py` against a running server |
+| Before a service | `./venv/bin/python tests/test_pipeline_config.py` |
 
-```bash
-# On target system
-cd /home/$USER/translator
-
-# Pull latest code (if using git)
-git pull
-
-# Or extract new code package
-tar -xzf translator-code-new.tar.gz --strip-components=1
-
-# Reinstall dependencies (if requirements changed)
-source venv/bin/activate
-pip install -r requirements/base.txt -r requirements/ml.txt
-
-# If the Parakeet backend is in use, re-run its installer after ROCm or
-# Python version changes — the onnxruntime-rocm wheel must be re-patched.
-# ./scripts/install_parakeet.sh
-
-# Restart service
-systemctl --user restart church-translator
-```
-
-### Model Updates
-
-```bash
-# Download new models
-source venv/bin/activate
-python scripts/download_models.py --all
-
-# Or extract model package
-tar -xzf translator-models-new.tar.gz
-
-# Restart service
-systemctl --user restart church-translator
-```
-
-### Full Update
-
-```bash
-# Stop service
-systemctl --user stop church-translator
-
-# Backup config
-cp -r config config.backup
-
-# Extract new version
-cd /home/$USER
-rm -rf translator.old
-mv translator translator.old
-tar -xzf translator-full-new.tar.gz -C translator/
-
-# Restore saved settings (device names, enabled languages, ASR model)
-cp translator.old/config/settings.yaml translator/config/settings.yaml
-
-# Reinstall
-cd translator
-./install.sh
-
-# Restart
-systemctl --user start church-translator
-```
+Silence is not a fault: the scheduler judges liveness by the heartbeat, not by
+recognized speech, so an empty room does not trigger a restart.
 
 ---
 
-## Backup and Recovery
+## Sharing the GPU
 
-### What to Backup
-
-Priority files for backup:
-
-```bash
-# Essential (small)
-config/settings.yaml    # Device names, enabled languages, ASR model
-
-# Large but replaceable
-models/                 # Can re-download
-venv/                   # Can reinstall
-```
-
-### Backup Script
-
-```bash
-#!/bin/bash
-# backup_translator.sh
-
-BACKUP_DIR="/home/$USER/backups"
-DATE=$(date +%Y%m%d_%H%M%S)
-
-mkdir -p "$BACKUP_DIR"
-
-# Backup config (essential)
-tar -czf "$BACKUP_DIR/translator-config-$DATE.tar.gz" \
-    -C /home/$USER/translator config/
-
-# Full backup (optional)
-tar -czf "$BACKUP_DIR/translator-full-$DATE.tar.gz" \
-    --exclude='logs/*' \
-    --exclude='__pycache__' \
-    -C /home/$USER translator/
-
-echo "Backup created: $BACKUP_DIR/translator-config-$DATE.tar.gz"
-```
-
-### Recovery
-
-```bash
-# Stop service
-systemctl --user stop church-translator
-
-# Restore config
-cd /home/$USER/translator
-tar -xzf /home/$USER/backups/translator-config-YYYYMMDD.tar.gz
-
-# Or full restore
-cd /home/$USER
-rm -rf translator
-tar -xzf /home/$USER/backups/translator-full-YYYYMMDD.tar.gz
-
-# Reinstall if needed
-cd translator
-./install.sh
-
-# Start service
-systemctl --user start church-translator
-```
+The reference host also runs the sermon-archive backlog worker between
+services. `docs/BACKLOG-CONTRACT.md` records how the scheduler drains it
+before every window, force-stops it at window open, relaunches it afterwards,
+and honours the thermal guard's hold. On a host without
+`~/Multi-Bitrate-Sermons` the scheduler skips all of that.
 
 ---
 
-## Air-Gapped Deployment
+## The reference host
 
-For systems without internet access:
+The production machine ("Translate", a mini PC in the sound room): Ryzen AI 9
+HX 370 with an RTX 3060 12 GB over OCuLink, Debian 13, kernel 7.1.8 from
+backports with headers, Secure Boot off, NVIDIA driver 610.57.04 as the open
+DKMS module from NVIDIA's Debian 13 repository, torch 2.11.0+cu128 in both
+venvs, NeMo 3.0.0 in `~/nemo-venv`. Audio: a Behringer USB interface (Spanish
+left, Creole right) and the onboard jack for Russian. The page is reached
+through a reverse proxy on another VLAN; `TRANSLATOR_TRUSTED_PROXIES` in the
+web unit names it so the login lockout counts real client addresses.
 
-### On Internet-Connected System
+The development laptop (Radeon 890M, ROCm 7.2.2, gfx1150 with
+`HSA_OVERRIDE_GFX_VERSION=11.0.0`, Secure Boot on — harmless for the in-tree
+driver) runs the same stack a little slower; it is the ROCm reference.
 
-```bash
-# Download all dependencies
-mkdir -p offline_packages
-
-# Download Python packages (split requirements since ml.txt uses an extra index)
-pip download -d offline_packages/ -r requirements/base.txt
-pip download -d offline_packages/ -r requirements/ml.txt \
-    --index-url https://download.pytorch.org/whl/rocm7.2 \
-    --extra-index-url https://pypi.org/simple
-
-# Optional: Parakeet backend (CPU-friendly streaming ASR)
-pip download -d offline_packages/ \
-    onnxruntime-rocm --pre -f https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.1/
-pip download -d offline_packages/ 'onnx-asr[hub]'
-
-# Download models
-python scripts/download_models.py --all
-
-# Optionally cache the Parakeet ONNX model too
-HF_HOME="$(pwd)/models/asr/parakeet" python -c \
-    "import onnx_asr; onnx_asr.load_model('nemo-parakeet-tdt-0.6b-v3', providers=['CPUExecutionProvider'])"
-
-# Create complete offline package
-tar -czf translator-offline.tar.gz \
-    --exclude='venv' \
-    --exclude='__pycache__' \
-    src/ scripts/ config/ docs/ models/ requirements/ \
-    offline_packages/ \
-    install.sh run.py README.md
-```
-
-### On Air-Gapped System
-
-```bash
-# Transfer via USB drive
-mount /dev/sdb1 /mnt/usb
-cp /mnt/usb/translator-offline.tar.gz /home/$USER/
-
-# Extract
-cd /home/$USER
-tar -xzf translator-offline.tar.gz -C translator/
-cd translator
-
-# Install system deps manually from your local apt mirror or DVD
-# (the package list is in install.sh — see the `apt-get install` block)
-sudo apt-get install -y python3 python3-venv python3-pip portaudio19-dev \
-    libsndfile1 ffmpeg espeak-ng libxml2 libopenblas-dev
-
-# Install Python packages from local cache
-python3 -m venv venv
-source venv/bin/activate
-pip install --no-index --find-links=offline_packages/ \
-    -r requirements/base.txt -r requirements/ml.txt
-
-# Optional Parakeet backend (same cache)
-pip install --no-index --find-links=offline_packages/ onnxruntime-rocm 'onnx-asr[hub]'
-# then patch the wheel's GNU_STACK bit and cache the model:
-./scripts/install_parakeet.sh    # reuses offline_packages/ via pip's default cache
-
-# Models are already included
-python run.py --test
-```
-
----
-
-## Troubleshooting Deployments
-
-### Installation Fails
-
-```bash
-# Check install log
-cat /tmp/translator_install.log
-
-# Verify system requirements
-uname -r                    # Kernel version
-python3 --version           # Python version
-lspci | grep -i vga         # GPU detection
-```
-
-### Service Won't Start
-
-```bash
-# Check service logs
-journalctl --user -u church-translator -n 100
-
-# Verify paths
-ls -la /home/$USER/translator/venv/bin/python
-ls -la /home/$USER/translator/run.py
-
-# Test manually
-cd /home/$USER/translator
-source venv/bin/activate
-python run.py --test
-```
-
-### GPU Not Working After Deployment
-
-```bash
-# Check ROCm (AMD) - baseline is 7.2.2
-/opt/rocm/bin/rocminfo | head -5
-/opt/rocm/bin/rocminfo | grep gfx         # expect gfx1150 on Radeon 890M
-
-# Check CUDA (NVIDIA)
-nvidia-smi
-
-# Reinstall GPU packages at the tested baseline
-source venv/bin/activate
-pip uninstall -y torch torchvision torchaudio
-pip install --index-url https://download.pytorch.org/whl/rocm7.2 \
-    torch==2.11.0+rocm7.2 torchvision torchaudio
-```
-
-**Note:** The tested baseline for integrated GPUs (680M / 780M / 890M,
-gfx1103 / gfx1150) is ROCm 7.2.2 with PyTorch 2.11.0+rocm7.2.  Older ROCm
-(6.x) will not detect these iGPUs.
-
-### Parakeet Falls Back to CPU
-
-This is expected on ROCm 7.2.2.  The published `onnxruntime-rocm` 1.22.2 wheel
-links `libhipblas.so.2` and `libamdhip64.so.6` (ROCm 6.x ABI), while Debian
-Trixie ships `.so.3` and `.so.7`.  The ROCMExecutionProvider and MIGraphX
-provider fail to load and onnxruntime silently uses the CPU provider.
-
-On a Ryzen AI 9 HX 370 Parakeet runs at RTF ≈ 0.06 on CPU (~16× realtime), so
-streaming still works.  **Do not** symlink the libraries across major versions
-— it crashes or returns wrong results.  When AMD publishes a 1.24+ wheel built
-for ROCm 7.x, re-run `./scripts/install_parakeet.sh` to pick it up.
-
-### Audio Devices Different
-
-```bash
-# Re-run device discovery
-python run.py --list-devices
-
-# Reconfigure devices / languages interactively
-python run.py --setup
-
-# Or edit the settings file directly
-nano config/settings.yaml
-```
+The onnx-asr Parakeet TDT model (`./install.sh --parakeet`,
+`scripts/install_parakeet.sh`) remains as the ASR fallback for a machine
+without the NeMo venv; on ROCm 7.2 its runtime silently uses the CPU (the
+published wheel links the ROCm 6 ABI), which is fast enough for streaming
+but is not the production path.

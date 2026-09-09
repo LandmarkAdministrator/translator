@@ -37,21 +37,23 @@ python -m pytest tests/
 Please include:
 - OS and kernel version (`uname -a`)
 - GPU model and driver version (`rocminfo` or `nvidia-smi`)
-- Full error output from the terminal or `journalctl --user -u church-translator -n 100`
+- Full error output from the terminal, `journalctl --user -u translate.service -n 100`,
+  or the tail of `~/translate.log`; `scripts/gpu_doctor.sh` output for GPU problems
 - Steps to reproduce
 
 ## Adding a New Language
 
-To add support for a new language:
-
-1. Find a Helsinki-NLP Opus-MT model for English → your language on [HuggingFace](https://huggingface.co/Helsinki-NLP)
-2. Find a [Piper TTS voice](https://github.com/rhasspy/piper/blob/master/VOICES.md) for your language
-3. Add the Opus-MT model ID to `TranslationService.MODEL_MAP` in [src/pipeline/translation.py](src/pipeline/translation.py)
-4. Add the Piper voice entry to `VOICE_MAP` in [src/pipeline/tts.py](src/pipeline/tts.py)
-5. Add the language to the `all_languages` list in [scripts/setup.py](scripts/setup.py)
-6. Download models: `python scripts/download_models.py --all`
-7. Test with `python run.py --setup` (enable the new language), then run the pipeline
-8. Submit a pull request
+Translation is NLLB-200 for every language, so a new language needs no
+translation model — only its FLORES code, a voice, and configuration. The
+recipe is in the README under "Adding a language": the code in
+`NLLB_LANG_CODES` (`src/pipeline/translation.py`), a voice — Kokoro where it
+has one, otherwise an MMS-TTS model id in `MMS_MODELS` (`src/pipeline/tts.py`)
+with the matching `XX_TTS` export in `scripts/run_production.sh`, Piper as the
+last resort — an entry in `config/settings.yaml` and `config/site.json`,
+short phrases in `src/pipeline/translate_short_dict.py` reviewed by a
+speaker, and `tests/test_pipeline_config.py` passing. Russian (2026-09-06)
+is the worked example: about half a day. Budget one extra NLLB pass
+(~0.5 s) of latency per added audio language.
 
 ## Code Style
 

@@ -83,30 +83,35 @@ cd translator
 ```
 
 The production ASR (`nvidia/parakeet-unified-en-0.6b`) runs in a second
-virtual environment, because NeMo needs Python 3.11 and its own PyTorch:
+virtual environment, because NeMo needs Python 3.11 and its own PyTorch.
+`scripts/install_site.sh` creates it (`~/nemo-venv`, Python 3.11 via uv,
+from `requirements-nemo.txt`, which is frozen from production) on CUDA hosts;
+on ROCm hosts make it by hand:
 
 ```bash
-python3.11 -m venv ~/nemo-venv
-~/nemo-venv/bin/pip install -r requirements-nemo.txt   # frozen from production
+uv venv --python 3.11 ~/nemo-venv
+~/nemo-venv/bin/pip install -r requirements-nemo.txt   # swap the cu128 index line for the ROCm one
 ```
 
-`install.sh` does not create it yet. The service launcher
-(`scripts/ops/start-translate-unified`) points the pipeline at it with
-`PARAKEET_MODEL=unified-remote` and `UNIFIED_PYTHON`.
+The service launcher (`scripts/ops/start-translate-unified`) points the
+pipeline at it with `PARAKEET_MODEL=unified-remote` and `UNIFIED_PYTHON`.
 
 > CPU-only installation is not supported — translation and TTS need a GPU.
 
-The installer will:
+`install.sh` will:
 1. Enable required Debian repositories (backports, contrib, non-free)
 2. Install system dependencies
-3. Install GPU drivers (ROCm 7.2.x or CUDA) if applicable
-4. Create Python virtual environment
-5. Install Python dependencies with correct GPU backend
-   (PyTorch 2.11+rocm7.2 or +cu124, transformers 5.x, huggingface_hub 1.x)
-6. Download ML models (NLLB-200, Kokoro, MMS-TTS, Piper)
+3. Install GPU drivers (ROCm 7.2.x, or NVIDIA's driver as described under
+   [NVIDIA CUDA Setup](#nvidia-cuda-setup)) if applicable
+4. Create the main Python virtual environment
+5. Install Python dependencies with the matching GPU backend
+   (PyTorch 2.11.0 +rocm7.2 or +cu128, transformers 5.x, huggingface_hub 1.x)
+6. Download the base models (NLLB-200, Kokoro, MMS-TTS, Piper)
 7. (If `--parakeet`) install onnxruntime-rocm + onnx-asr and pre-download
    the Parakeet TDT 0.6b v3 ONNX model (the no-NeMo fallback)
-8. Set up the systemd service
+8. Run `scripts/install_site.sh` for everything else — the NeMo venv, the
+   configuration, the admin password, the scheduler and the systemd units —
+   and `scripts/gpu_doctor.sh` as the final check
 
 ---
 
@@ -187,9 +192,9 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 pip install -r requirements/base.txt -r requirements/ml.txt
 ```
 
-For NVIDIA CUDA:
+For NVIDIA CUDA (driver 570 or newer; production runs 610):
 ```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements/base.txt -r requirements/ml.txt
 ```
 
@@ -481,10 +486,12 @@ python run.py --setup
 ```
 
 The setup wizard guides you through:
-1. Selecting audio input device
-2. Configuring output devices for each language
-3. Testing the pipeline
-4. Saving configuration as a preset
+1. Selecting the audio input device
+2. Configuring the output device and channel for each language
+3. Saving the result to `config/settings.yaml`
+
+The admin panel (`/admin`, once `translate-web.service` is running) does the
+same from a browser and is the usual way on a serving machine.
 
 ### Command Line Usage
 
@@ -513,43 +520,27 @@ python run.py --verbose
 
 ## Running as a Service
 
-### Install the Systemd Service
+`scripts/install_site.sh` installs the user units (sources in `systemd/`)
+and enables lingering so they run without a login:
+
+| Unit | Role |
+|---|---|
+| `translate.service` | the pipeline — started and stopped by the scheduler inside the windows in `config/schedule.conf`; never enabled at boot |
+| `translate-web.service` | the page, the WebSocket stream and `/admin`; always on |
+| `translate-window.timer` | the scheduler, every five minutes |
+| `translate-tally.timer` | the nightly service tally at 23:30 |
+| `gpu-thermal-guard.service` | stops translation at 85 °C |
 
 ```bash
-# User service (recommended, no sudo for operation)
-./scripts/install_service.sh install
-
-# Or system-wide service
-sudo ./scripts/install_service.sh --system install
+systemctl --user status translate.service translate-web.service
+journalctl --user -u translate.service -f          # the pipeline's own log is ~/translate.log
+systemctl --user list-timers                       # next window check and tally
 ```
 
-### Service Commands
-
-For user service:
-```bash
-systemctl --user start church-translator
-systemctl --user stop church-translator
-systemctl --user status church-translator
-journalctl --user -u church-translator -f
-```
-
-For system service:
-```bash
-sudo systemctl start church-translator
-sudo systemctl stop church-translator
-sudo systemctl status church-translator
-sudo journalctl -u church-translator -f
-```
-
-### Autostart at Boot
-
-The user service requires "lingering" to start without login:
-
-```bash
-sudo loginctl enable-linger $USER
-```
-
-This is done automatically by the install script.
+Start and stop by hand from `/admin` (which pauses the schedule until
+"Resume automatic schedule"), or `touch ~/translate-manual.flag` to keep the
+scheduler's hands off everything while it exists. `docs/DEPLOYMENT.md` covers
+updating, rollback and diagnosis.
 
 ---
 
@@ -619,18 +610,20 @@ python scripts/download_models.py --tts
 
 - Confirm the GPU is actually in use: watch `rocm-smi` (AMD) or `nvidia-smi`
   (NVIDIA) during a session and check for activity.
-- Close other GPU-intensive applications (browsers, video players, etc.).
-- Reduce chunk duration in config.
-- **Fallback:** on low-VRAM GPUs (≤6 GB) large-v3 may not fit.  Re-run
-  `./translator --setup` → "Configure ASR model" and pick `medium.en` or
-  `small.en`.  Smaller models cost some accuracy but greatly reduce VRAM
-  and latency.
+- Close other GPU-intensive applications (browsers, video players, etc.);
+  on the production host the sermon-archive worker is drained before every
+  window for this reason (`docs/BACKLOG-CONTRACT.md`).
+- Check the nightly tally in `/admin`: it reports the delay from first word
+  to translated audio per service, so a slow day shows up with numbers.
+- The streaming ASR's context preset (`UNIFIED_LEFT/CHUNK/RIGHT_SECS`) is
+  already the fastest setting that does not cost accuracy; do not enlarge it.
 
 ### Service Won't Start
 
 ```bash
 # Check logs
-journalctl --user -u church-translator -n 50
+journalctl --user -u translate.service -n 50
+tail -50 ~/translate.log
 
 # Verify venv activation works
 /home/$USER/translator/venv/bin/python --version
