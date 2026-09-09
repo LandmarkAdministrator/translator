@@ -286,7 +286,8 @@ grep -a "protocol 2\|HEARTBEAT" ~/translate.log | tail -3     # both must appear
 start picks the new code up. The admin panel's Start does the same.
 
 **Rollback:** `git checkout <previous commit>` in `~/translator` and copy the
-old scheduler back from `~/bin/translate-window-check.sh.bak-0906`. The
+old scheduler back from git history (`scripts/ops/`; the pre-git copies
+moved to `~/archive/test-campaign-2026-09/bin/` on 2026-09-09). The
 protocol change needs no coordination: either side works with the other.
 
 ---

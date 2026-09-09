@@ -27,7 +27,7 @@ file. There is no plan to retire the script.
 | A "hands off everything" switch | `~/translate-manual.flag` — unchanged. While it exists the script does nothing at all. The admin panel's Start and Stop set it; "Resume automatic schedule" clears it |
 | Manual translation start must not collide with the worker | since 2026-09-08 the admin panel's Start sets `stop.flag` and stops the worker (unit first, then any comm-validated PID) before starting translation; the worker returns when the schedule is resumed |
 | Greppable state-change log | `~/sermons/logs/translate-window.log` (every decision) and `schedule.log` (launch failures) — unchanged |
-| If the old scheduler is ever retired: disable the timer, keep the backup | not planned; `~/bin/translate-window-check.sh.bak-20260906` is in place regardless |
+| If the old scheduler is ever retired: disable the timer, keep the backup | not planned; every version of the script is in git history (`scripts/ops/`), and the pre-git copies are in `~/archive/test-campaign-2026-09/bin/` |
 
 Two things worth knowing on the archive side:
 

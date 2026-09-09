@@ -874,70 +874,12 @@ install_parakeet() {
 }
 
 #=============================================================================
-# Systemd Service
-#=============================================================================
-
-install_systemd_service() {
-    header "Installing Systemd Service"
-
-    if ! confirm "Install systemd user service for autostart?"; then
-        return 0
-    fi
-
-    local service_dir="$REAL_HOME/.config/systemd/user"
-    mkdir -p "$service_dir"
-
-    cat > "$service_dir/church-translator.service" << EOF
-[Unit]
-Description=Church Audio Translator
-After=pipewire.service pulseaudio.service
-Wants=pipewire.service
-
-[Service]
-Type=simple
-WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/venv/bin/python $INSTALL_DIR/run.py
-Restart=on-failure
-RestartSec=5s
-StandardOutput=journal
-StandardError=journal
-Environment="PYTHONUNBUFFERED=1"
-EOF
-
-    # Add GPU-specific environment
-    if [[ "$GPU_BACKEND" == "rocm" ]]; then
-        # Read HSA_OVERRIDE from the .env.rocm file written during ROCm setup
-        # so the correct value is used for this specific GPU (not hardcoded)
-        local hsa_override=""
-        if [[ -f "$INSTALL_DIR/.env.rocm" ]]; then
-            hsa_override=$(grep "HSA_OVERRIDE_GFX_VERSION" "$INSTALL_DIR/.env.rocm" | cut -d= -f2 | tr -d '"' | tr -d "'" | head -1)
-        fi
-        # Fall back to 11.0.0 (correct for 890M/780M) if not found
-        hsa_override="${hsa_override:-11.0.0}"
-
-        cat >> "$service_dir/church-translator.service" << EOF
-Environment="HSA_OVERRIDE_GFX_VERSION=${hsa_override}"
-Environment="PATH=/opt/rocm/bin:\$PATH"
-EOF
-    fi
-
-    cat >> "$service_dir/church-translator.service" << EOF
-
-[Install]
-WantedBy=default.target
-EOF
-
-    # Reload systemd
-    systemctl --user daemon-reload
-
-    log "Systemd service installed."
-    log "Enable with: systemctl --user enable church-translator"
-    log "Start with:  systemctl --user start church-translator"
-}
-
-#=============================================================================
 # Create Launcher Scripts
 #=============================================================================
+# (The systemd units are the site layer's job — scripts/install_site.sh
+# installs translate.service, translate-web.service and the timers from
+# systemd/. The church-translator.service writer that used to live here was
+# never called since the site layer arrived and was removed on 2026-09-09.)
 
 create_launcher_scripts() {
     header "Creating Launcher Scripts"
