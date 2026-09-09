@@ -84,3 +84,6 @@ tests/comparison/old_stack/
 tests/comparison/nemo_streaming_infer_reference.py
 tests/comparison/2*/
 tests/comparison/canary_*/
+
+# Collateral (logo, QR, cards) — local + Synology, never GitHub
+artwork/
