@@ -1,0 +1,14 @@
+# Read by ~/.git-hooks/_sync-to-nas (the laptop's post-commit mirror of this
+# folder to the Synology Repo share). Everything listed here is large and
+# regenerable, so it is not worth pushing over SMB after every commit:
+#   venv/ and ~/nemo-venv are rebuilt by install.sh / install_site.sh,
+#   models/ by install_site.sh --prefetch. Git-ignored things that are NOT
+#   regenerable (artwork/, artwork-sources/, TODO.md, config/settings.yaml)
+#   are deliberately absent from this list so they keep being mirrored.
+venv/
+.venv/
+models/
+staging-models/
+logs/
+tests/ab_test/audio/
+__pycache__/
