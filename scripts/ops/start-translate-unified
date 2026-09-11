@@ -13,6 +13,14 @@
 # but those are gzipped on exit and so are no good for liveness checks.
 cd "$HOME/translator" || exit 1
 
+# Everything the stack loads is in the local caches, so never let a model
+# load wait on the Hugging Face hub. Found the hard way on 2026-09-11: after a
+# power outage the PC came back with DNS but no outbound TCP, and without
+# these each cached model would have sat on a hub check that could never
+# connect — minutes of delay, or a failed start, at 09:55 on a Sunday.
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+
 export PARAKEET_MODEL="unified-remote"
 export PARAKEET_PATH=""
 export UNIFIED_PYTHON="$HOME/nemo-venv/bin/python"
