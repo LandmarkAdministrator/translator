@@ -190,7 +190,7 @@ keys across both worktrees:
 
 | Where | What it is | Becomes |
 |---|---|---|
-| `plugin/lbc-sermons/**` (~600 hits) | plugin slug, PHP class prefix, CSS class prefix, option and table names, author | mechanical rename to a generic slug, plus a migration step for the live site's options/tables |
+| `plugin/<our-slug>-sermons/**` (~600 hits) | plugin slug, PHP class prefix, CSS class prefix, option and table names, author | mechanical rename to a generic slug, plus a migration step for the live site's options/tables |
 | `scripts/normalize_speakers*.py` (71) | our speakers' names and spellings | a data file, `config/speakers.yaml`, shipped empty |
 | `scripts/caddy_*.py`, `setup_caddy_*.sh` (36) | our domains and download host | config keys |
 | `scripts/lbc-usb-backup-weekly.sh` (18) | our drive labels and mount points | config keys |
