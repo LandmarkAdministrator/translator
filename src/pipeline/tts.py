@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Optional, List
 import numpy as np
 
+from .number_words import verbalize
+
 
 # MMS-TTS model ids by our 2-letter language code.
 MMS_MODELS = {
@@ -425,6 +427,11 @@ class TTSService:
 
         if self._use_mms:
             import torch
+            # MMS voices are character-level VITS models whose vocabulary has
+            # no digits — VitsTokenizer drops them silently, so "chapit 6" was
+            # spoken as "chapit".  Spell numbers out first.  Kokoro and Piper
+            # verbalize digits themselves, so this is the MMS path only.
+            text = verbalize(text, self.language)
             inputs = self._mms_tokenizer(text, return_tensors="pt").to(self._mms_device)
             # VITS exposes speaking_rate as a model attribute; scale duration
             # without a pitch shift, restore afterwards.
