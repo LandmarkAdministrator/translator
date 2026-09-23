@@ -28,6 +28,7 @@ from pipeline.sentence_buffer import SentenceBuffer
 from pipeline.translation import TranslationService, TranslationResult
 from pipeline.tts import TTSService, SpeechResult
 from web.bus import BUS as WEB_BUS
+from pipeline import profiling
 
 # A HEARTBEAT line this often, from the audio path, whether or not anyone is
 # speaking. The scheduler's stall watchdog reads the log's mtime: without a
@@ -233,7 +234,8 @@ class LanguagePipeline:
                       queue_depth: int = 0) -> None:
         """Process a single text through translation and TTS."""
         # Translate
-        translation = self._translator.translate(text)
+        with profiling.span("translate", self.config.language_code):
+            translation = self._translator.translate(text)
         if translation.is_empty:
             return
 
@@ -246,7 +248,8 @@ class LanguagePipeline:
             speed = 1.35
         elif queue_depth >= 2:
             speed = 1.2
-        speech = self._tts.synthesize(translation.translated_text, speed=speed)
+        with profiling.span("tts", self.config.language_code):
+            speech = self._tts.synthesize(translation.translated_text, speed=speed)
         if speed != 1.0:
             logger.info("[{}] queue_depth={} → speaking at {:.2f}x",
                         self.config.language_code.upper(), queue_depth, speed)
@@ -259,6 +262,19 @@ class LanguagePipeline:
                             t0=chunk_start_time)
         WEB_BUS.audio(self.config.language_code, speech.audio, speech.sample_rate,
                       t0=chunk_start_time)
+
+        profiling.record(
+            "sentence",
+            lang=self.config.language_code,
+            chars_in=len(text),
+            chars_out=len(translation.translated_text),
+            translation_time=round(translation.processing_time, 4),
+            tts_time=round(speech.processing_time, 4),
+            audio_seconds=round(speech.duration, 4),
+            queue_depth=queue_depth,
+            asr_time=round(asr_time, 4),
+            speed=speed,
+        )
 
         # Record when playback starts (this is the true end-to-end point)
         playback_start = time.time()
