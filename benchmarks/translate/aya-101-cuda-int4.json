@@ -1,0 +1,22 @@
+{
+  "model": "aya-101",
+  "hf_id": "CohereLabs/aya-101",
+  "family": "aya",
+  "license": "Apache-2.0",
+  "device": "cuda",
+  "dtype": "int4",
+  "langs": [
+    "es",
+    "ht",
+    "ru"
+  ],
+  "threads": 1,
+  "sentences": 60,
+  "translations": 0,
+  "load_seconds": 0.0,
+  "wall_seconds": 0.0,
+  "peak_vram_mb": null,
+  "error": "does not fit: loading exhausted the GPU-addressable memory (15.2 GB, half of system RAM) on this machine; the RTX 3060 ran out at 11.6 GB. A 250k-token embedding stays unquantized.",
+  "host": "it-vivobook-s14",
+  "timestamp": "2026-09-22T23:24:51"
+}

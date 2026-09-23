@@ -1,0 +1,22 @@
+{
+  "model": "madlad-7b",
+  "hf_id": "google/madlad400-7b-mt",
+  "family": "madlad",
+  "license": "Apache-2.0",
+  "device": "cuda",
+  "dtype": "int4",
+  "langs": [
+    "es",
+    "ht",
+    "ru"
+  ],
+  "threads": 1,
+  "sentences": 60,
+  "translations": 0,
+  "load_seconds": 0.0,
+  "wall_seconds": 0.0,
+  "peak_vram_mb": null,
+  "error": "does not fit: loading crawled as the 15.2 GB GPU-addressable ceiling was approached (its 256k-token embedding and output head stay unquantized, ~4 GB). The RTX 3060 could not load it either.",
+  "host": "it-vivobook-s14",
+  "timestamp": "2026-09-23T00:44:40"
+}

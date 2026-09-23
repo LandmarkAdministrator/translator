@@ -1,0 +1,22 @@
+{
+  "model": "mistral-nemo-12b",
+  "hf_id": "mistralai/Mistral-Nemo-Instruct-2407",
+  "family": "causal",
+  "license": "Apache-2.0",
+  "device": "cuda",
+  "dtype": "int4",
+  "langs": [
+    "es",
+    "ht",
+    "ru"
+  ],
+  "threads": 1,
+  "sentences": 60,
+  "translations": 0,
+  "load_seconds": 0.0,
+  "wall_seconds": 21600.0,
+  "peak_vram_mb": null,
+  "error": "did not fit: loading never finished within the 6-hour limit. The load slowed from ~10 shards/s to over an hour per shard as the GPU-addressable ceiling (15.2 GB, half of system RAM) was reached and the machine began thrashing \u2014 the same wall as aya-101. The RTX 3060 ran this configuration in about 5 minutes at 10.5 GB.",
+  "host": "it-vivobook-s14",
+  "timestamp": "2026-09-22T23:26:45"
+}

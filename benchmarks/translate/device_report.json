@@ -1,0 +1,98 @@
+{
+  "machine": {
+    "hostname": "it-vivobook-s14",
+    "platform": "Linux-7.1.8+deb13-amd64-x86_64-with-glibc2.41",
+    "python": "3.13.5",
+    "cpu_count": 24,
+    "cpu": "AMD Ryzen AI 9 HX 370 w/ Radeon 890M",
+    "ram_gb": 30.5
+  },
+  "torch": {
+    "available": true,
+    "version": "2.11.0+rocm7.2",
+    "cuda_is_available": true,
+    "cuda_build": null,
+    "hip_build": "7.2.26015",
+    "flavor": "rocm",
+    "device_count": 1,
+    "devices": [
+      "AMD Radeon 890M"
+    ],
+    "matmul_cpu_s": 0.0283,
+    "matmul_gpu_s": 0.0015,
+    "gpu_speedup": 18.5,
+    "gpu_really_working": true
+  },
+  "onnxruntime": {
+    "installed": true,
+    "version": "1.25.1",
+    "providers": [
+      "AzureExecutionProvider",
+      "CPUExecutionProvider"
+    ],
+    "accelerated_providers": [],
+    "cpu_only": true
+  },
+  "asr": {
+    "PARAKEET_MODEL": "(unset)",
+    "UNIFIED_PYTHON": "(unset)",
+    "using_nemo_unified": false,
+    "nemo_venv_present": false,
+    "note": "Falling back to the onnx-asr TDT model: lower accuracy and no punctuation-driven sentence boundaries. Benchmarks against a box running unified-remote are NOT comparable."
+  },
+  "env": {
+    "NLLB_MODEL": "(unset)",
+    "NLLB_DEVICE": "(unset)",
+    "NLLB_DTYPE": "(unset)",
+    "ES_TTS": "(unset)",
+    "HT_TTS": "(unset)",
+    "RU_TTS": "(unset)",
+    "KOKORO_DEVICE": "(unset)",
+    "MMS_DEVICE": "(unset)",
+    "HSA_OVERRIDE_GFX_VERSION": "11.0.0",
+    "ROCR_VISIBLE_DEVICES": "(unset)",
+    "CUDA_VISIBLE_DEVICES": "(unset)",
+    "HIP_VISIBLE_DEVICES": "(unset)",
+    "TRANSLATE_PROFILE": "(unset)"
+  },
+  "tools": {
+    "ffmpeg": "/usr/bin/ffmpeg",
+    "ffprobe": "/usr/bin/ffprobe",
+    "espeak-ng": "/usr/bin/espeak-ng",
+    "nvidia-smi": null,
+    "rocm-smi": "/opt/rocm/bin/rocm-smi",
+    "rocminfo": "/opt/rocm/bin/rocminfo",
+    "vainfo": "/usr/bin/vainfo",
+    "gpu_name": "card0,AMD Radeon Graphics,0x150e,Advanced Micro Devices Inc. [AMD/ATI],STRIXEMU,0x1ee3,0xc1,1,65013,gfx1150"
+  },
+  "verdicts": [
+    {
+      "level": "OK",
+      "message": "torch 2.11.0+rocm7.2 (rocm build)"
+    },
+    {
+      "level": "OK",
+      "message": "GPU compute confirmed: 18.5x faster than CPU on a 2048x2048 matmul (GPU fp16 vs CPU fp32)"
+    },
+    {
+      "level": "OK",
+      "message": "onnxruntime is CPU-only \u2014 expected; Parakeet on CPU measured 37x realtime and is the recommended production placement"
+    },
+    {
+      "level": "WARN",
+      "message": "ASR is the onnx-asr TDT model, not unified-remote. Fine on its own, but NOT comparable with a box running unified-remote: different model, no punctuation-driven sentence boundaries, so a different number of sentences reaches translation"
+    },
+    {
+      "level": "WARN",
+      "message": "NLLB_DEVICE unset \u2014 did you source run_production.sh?"
+    },
+    {
+      "level": "WARN",
+      "message": "KOKORO_DEVICE unset \u2014 did you source run_production.sh?"
+    },
+    {
+      "level": "WARN",
+      "message": "MMS_DEVICE unset \u2014 did you source run_production.sh?"
+    }
+  ]
+}

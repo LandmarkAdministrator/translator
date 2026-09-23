@@ -1,0 +1,254 @@
+========================================================================================================
+TRANSLATION BENCHMARK
+  it-vivobook-s14: cuda = AMD Radeon 890M
+========================================================================================================
+model             prec  device  thr     load    wall    mean     p95    tr/s     VRAM  license
+--------------------------------------------------------------------------------------------------------
+m2m100-1.2b       ?     cpu     1       41.3   787.0   2.301   4.874    0.43        —  MIT
+m2m100-1.2b       ?     cpu     3        3.1   474.9   4.045   8.431    0.72        —  MIT
+m2m100-1.2b       ?     cuda    1        2.3   264.6   0.774   1.704    1.29  2417.5M  MIT
+m2m100-1.2b       ?     cuda    3        5.2   263.5   2.257   5.116    1.30  7235.7M  MIT
+m2m100-418m       ?     cpu     1       19.0   393.4   1.150   2.449    0.87        —  MIT
+m2m100-418m       ?     cpu     3        5.7   244.5   1.895   4.129    1.40        —  MIT
+m2m100-418m       ?     cuda    1        1.7   132.1   0.386   0.839    2.59   975.0M  MIT
+m2m100-418m       ?     cuda    3        3.6   135.0   1.099   2.595    2.53  2898.4M  MIT
+nllb-1.3b         ?     cpu     1        3.7   971.6   2.841   6.014    0.35        —  CC-BY-NC-4.0  (NOT usable commercially)
+nllb-1.3b         ?     cpu     3        8.0   542.9   4.575   9.729    0.63        —  CC-BY-NC-4.0  (NOT usable commercially)
+nllb-1.3b         ?     cuda    1        3.2   275.6   0.806   1.775    1.24  2668.7M  CC-BY-NC-4.0  (NOT usable commercially)
+nllb-1.3b         ?     cuda    3       11.1   269.3   2.298   5.137    1.27  7983.9M  CC-BY-NC-4.0  (NOT usable commercially)
+opus              fp32  cpu     1       12.3    80.2   0.234   0.506    4.26        —  CC-BY-4.0
+opus              fp32  cpu     3       15.0    40.7   0.327   0.679    8.40        —  CC-BY-4.0
+opus              fp16  cuda    1       11.7    21.9   0.064   0.136   15.58   463.6M  CC-BY-4.0
+opus              fp16  cuda    3       10.8    21.0   0.181   0.389   16.30   531.4M  CC-BY-4.0
+
+QUALITY SIGNALS (no gold reference — these catch real failures)
+--------------------------------------------------------------------------------------------------------
+model             prec  device  thr     empty   copied   loops  num kept  len ratio
+m2m100-1.2b       ?     cpu     1        0.0%     0.0%    0.3%    100.0%       0.99
+m2m100-1.2b       ?     cpu     3        0.0%     0.0%    0.3%    100.0%       0.99
+m2m100-1.2b       ?     cuda    1        0.0%     0.0%    0.3%    100.0%       1.00
+m2m100-1.2b       ?     cuda    3        0.0%     0.0%    0.3%    100.0%       1.00
+m2m100-418m       ?     cpu     1        0.0%     0.0%    1.2%    100.0%       1.18
+m2m100-418m       ?     cpu     3        0.0%     0.0%    1.2%    100.0%       1.18
+m2m100-418m       ?     cuda    1        0.0%     0.0%    1.2%    100.0%       1.18
+m2m100-418m       ?     cuda    3        0.0%     0.0%    1.2%    100.0%       1.18
+nllb-1.3b         ?     cpu     1        0.0%     0.0%    0.3%    100.0%       0.99
+nllb-1.3b         ?     cpu     3        0.0%     0.0%    0.3%    100.0%       0.99
+nllb-1.3b         ?     cuda    1        0.0%     0.0%    0.3%    100.0%       0.99
+nllb-1.3b         ?     cuda    3        0.0%     0.0%    0.3%    100.0%       0.99
+opus              fp32  cpu     1        0.0%     0.0%    0.0%    100.0%       0.95
+opus              fp32  cpu     3        0.0%     0.0%    0.0%    100.0%       0.95
+opus              fp16  cuda    1        0.0%     0.0%    0.0%    100.0%       0.95
+opus              fp16  cuda    3        0.0%     0.0%    0.0%    100.0%       0.95
+
+WHERE EACH MODEL RUNS BEST
+--------------------------------------------------------------------------------------------------------
+  m2m100-1.2b        CPU 2.301s vs GPU 0.774s = 3.0x  -> GPU is worth it
+  m2m100-418m        CPU 1.150s vs GPU 0.386s = 3.0x  -> GPU is worth it
+  nllb-1.3b          CPU 2.841s vs GPU 0.806s = 3.5x  -> GPU is worth it
+  opus               CPU 0.234s vs GPU 0.064s = 3.7x  -> GPU is worth it
+
+SHARED MODEL vs PER-LANGUAGE INSTANCES
+--------------------------------------------------------------------------------------------------------
+  m2m100-1.2b        cpu    serial 787.0s vs 3 instances 474.9s = 1.66x  <- parallelism pays
+  m2m100-1.2b        cuda   serial 264.6s vs 3 instances 263.5s = 1.00x
+                 VRAM 2417.5M -> 7235.7M
+  m2m100-418m        cpu    serial 393.4s vs 3 instances 244.5s = 1.61x  <- parallelism pays
+  m2m100-418m        cuda   serial 132.1s vs 3 instances 135.0s = 0.98x
+                 VRAM 975.0M -> 2898.4M
+  nllb-1.3b          cpu    serial 971.6s vs 3 instances 542.9s = 1.79x  <- parallelism pays
+  nllb-1.3b          cuda   serial 275.6s vs 3 instances 269.3s = 1.02x
+                 VRAM 2668.7M -> 7983.9M
+  opus               cpu    serial 80.2s vs 3 instances 40.7s = 1.97x  <- parallelism pays
+  opus               cuda   serial 21.9s vs 3 instances 21.0s = 1.05x
+                 VRAM 463.6M -> 531.4M
+
+SIDE BY SIDE (read these — the metrics above cannot judge fluency)
+========================================================================================================
+  from: m2m100-1.2b (it-vivobook-s14, cuda), m2m100-418m (it-vivobook-s14, cuda), nllb-1.3b (it-vivobook-s14, cuda), opus (it-vivobook-s14, cuda)
+
+### ES
+
+  EN   Thank you, Brother Oar.
+  m2m100-1.2b      Gracias hermano Oar.
+  m2m100-418m      Gracias, hermano Oar
+  nllb-1.3b        Gracias, hermano remo.
+  opus             Gracias, hermano Oar.
+
+  EN   With a portion of the king's meat.
+  m2m100-1.2b      con una porción de la carne del rey.
+  m2m100-418m      Una porción de la carne del rey.
+  nllb-1.3b        Con una porción de la carne del rey.
+  opus             Con una porción de la carne del rey.
+
+  EN   And tribulations of this life.
+  m2m100-1.2b      y las tribulaciones de esta vida.
+  m2m100-418m      y las tribulaciones de esta vida.
+  nllb-1.3b        Y las tribulaciones de esta vida.
+  opus             Y las tribulaciones de esta vida.
+
+  EN   Send the Holy Spirit.
+  m2m100-1.2b      Envíe el Espíritu Santo.
+  m2m100-418m      Envíe al Espíritu Santo.
+  nllb-1.3b        Envía el Espíritu Santo.
+  opus             Envía al Espíritu Santo.
+
+  EN   Several verses of this passage.
+  m2m100-1.2b      Varios versos de este pasaje.
+  m2m100-418m      Varios versos de este paso.
+  nllb-1.3b        Varios versículos de este pasaje.
+  opus             Varios versículos de este pasaje.
+
+  EN   He is not necessarily his day job is not to be a preacher, but his day job is to simply be faithful with an excellent spirit and to do whatever he's t
+  m2m100-1.2b      No es necesariamente su trabajo de día no ser un predicador, sino su trabajo de día es simplemente ser fiel con un espíritu excelente y hacer lo que l
+  m2m100-418m      No es necesariamente su trabajo de día no es ser un predicador, pero su trabajo de día es simplemente ser fiel con un excelente espíritu y hacer lo qu
+  nllb-1.3b        No es necesariamente su trabajo diario no es ser predicador, pero su trabajo diario es simplemente ser fiel con un espíritu excelente y hacer lo que s
+  opus             No es necesariamente su trabajo diario no es ser predicador, pero su trabajo diario es simplemente ser fiel con un espíritu excelente y hacer lo que s
+
+  EN   I don't know if you took this down, but he is one of the presidents.
+  m2m100-1.2b      No sé si lo has tomado, pero él es uno de los presidentes.
+  m2m100-418m      No sé si lo tomaste, pero él es uno de los presidentes.
+  nllb-1.3b        No sé si lo has grabado, pero es uno de los presidentes.
+  opus             No sé si lo has quitado, pero es uno de los presidentes.
+
+  EN   I'd rather have I'd rather name one more president and put Daniel over them so that the only person I meet with is Daniel to give me report because wh
+  m2m100-1.2b      Prefiero que nombrara a otro presidente y poniera a Daniel por encima de ellos, para que la única persona con la que me encuentro sea Daniel para darm
+  m2m100-418m      Prefiero que nombré a otro presidente y ponga a Daniel sobre ellos para que la única persona que encuentro sea Daniel para darme un informe porque cua
+  nllb-1.3b        Preferiría nombrar a un presidente más y poner a Daniel sobre ellos para que la única persona con la que me encuentre sea Daniel para que me informe p
+  opus             Prefiero nombrar a un presidente más y poner a Daniel sobre ellos para que la única persona con la que me encuentro sea Daniel para darme un informe p
+
+  EN   There are problems with roads and buildings and people with uprisings and them having to squelch uprisings.
+  m2m100-1.2b      Hay problemas con las carreteras y los edificios y con las personas con revueltas y tienen que deshacer las revueltas.
+  m2m100-418m      Hay problemas con las calles y los edificios y las personas con rebelión y tienen que desencadenar las rebeliones.
+  nllb-1.3b        Hay problemas con las carreteras y los edificios y la gente con levantamientos y ellos teniendo que reprimir los levantamientos.
+  opus             Hay problemas con carreteras y edificios y personas con levantamientos y ellos tienen que sofocar levantamientos.
+
+  EN   He's got an excellent spirit.
+  m2m100-1.2b      Tiene un espíritu excelente.
+  m2m100-418m      Tiene un espíritu excelente.
+  nllb-1.3b        Tiene un espíritu excelente.
+  opus             Tiene un espíritu excelente.
+
+### HT
+
+  EN   Thank you, Brother Oar.
+  m2m100-1.2b      Mèsi pou ou, frè Oar.
+  m2m100-418m      Te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te 
+  nllb-1.3b        Mèsi, Frè Oar.
+  opus             Mèsi, frè O.
+
+  EN   With a portion of the king's meat.
+  m2m100-1.2b      Yon pati nan manje a nan yon reyal.
+  m2m100-418m      Yon pati nan yon pati nan yon pati nan yon pati nan yon pati nan yon pati nan yon pati nan yon pati nan yon pati nan yon pati nan yon pati nan yon pat
+  nllb-1.3b        Avèk yon pòsyon vyann wa a.
+  opus             Li te gen yon pòsyon nan vyann wa a.
+
+  EN   And tribulations of this life.
+  m2m100-1.2b      Epi, yo te yon tribulasyon nan lavi sa a.
+  m2m100-418m      ak twal nan lavi sa a.
+  nllb-1.3b        Ak tribilasyon lavi sa a.
+  opus             E tribilasyon ki gen nan lavi sa a.
+
+  EN   Send the Holy Spirit.
+  m2m100-1.2b      Lè l sèvi avèk l 'Sant.
+  m2m100-418m      Enskri nan Espirite Sant.
+  nllb-1.3b        Voye Sentespri a.
+  opus             Voye lespri sen.
+
+  EN   Several verses of this passage.
+  m2m100-1.2b      Yon kèk vers nan pasaj sa a.
+  m2m100-418m      Yon kèk vers nan sa a.
+  nllb-1.3b        Plizyè vèsè nan pasaj sa a.
+  opus             Plizyè vèsè nan pasaj sa a.
+
+  EN   He is not necessarily his day job is not to be a preacher, but his day job is to simply be faithful with an excellent spirit and to do whatever he's t
+  m2m100-1.2b      Li pa nesesèman travay jou li yo pa yo dwe yon predikateur, men travay jou li yo se jis pou yo dwe fidèl ak yon espwa ekselan ak fè sa ki jan li te di
+  m2m100-418m      Li pa gen bezwen travay nan jou li se pa dwe yon pre, men travay nan jou li se sèlman yo dwe fid ak yon espès ki byen ak fè tout bagay ki li te di pas
+  nllb-1.3b        Li pa nesesèman travay jou li se pa dwe yon predikatè, men travay jou li se tou senpleman yo dwe fidèl ak yon lespri ekselan epi fè tou sa yo di l 'pa
+  opus             Li pa oblije preche jou l la sèlman, men, travay li a se senpleman montre li fidèl ak yon bèl etadespri e li fè tout sa l di paske li sou yon wayòm ki
+
+  EN   I don't know if you took this down, but he is one of the presidents.
+  m2m100-1.2b      Mwen pa konnen si ou te pran sa a anba, men li se youn nan prezidan yo.
+  m2m100-418m      Mwen pa konnen si ou te pran sa a, men li se youn nan presidè yo.
+  nllb-1.3b        Mwen pa konnen si ou te retire sa a, men li se youn nan prezidan yo.
+  opus             Mwen pa konnen si ou pran sa a desann, men li se youn nan a.
+
+  EN   I'd rather have I'd rather name one more president and put Daniel over them so that the only person I meet with is Daniel to give me report because wh
+  m2m100-1.2b      Mwen ta pi bon yo te anonse yon lòt prezidan ak mete Daniel sou yo, se konsa ke moun sèlman mwen te jwenn se Daniel a bay m 'raporte paske lè li antre
+  m2m100-418m      Mwen pral pi renmen yo nomine yon lòt presidè ak mete Daniel sou yo, ki se yon sèl moun ki mwen reze nan Daniel yo bay m 'report, paske lè li entè nan
+  nllb-1.3b        Mwen ta pito mwen ta pito nonmen yon sèl prezidan plis epi mete Danyèl sou yo pou ke sèl moun mwen rankontre ak se Danyèl bay m 'yon rapò paske lè li 
+  opus             Olye m te rele yon lòt prezidan epi m te mete Dànyèl sou yo, se pou sèl moun mwen rankontre a se pou l ban m rapò paske li antre nan twòn nan pou l pa
+
+  EN   There are problems with roads and buildings and people with uprisings and them having to squelch uprisings.
+  m2m100-1.2b      Gen pwoblèm ak wout ak bilding ak moun ki gen revolisyon ak yo dwe ranfòse revolisyon.
+  m2m100-418m      Li gen pwoblèm ak rulo ak konstriksyon, ak moun ki gen revolt ak yo dwe fè revolt yo.
+  nllb-1.3b        Gen pwoblèm ak wout ak bilding ak moun ki gen revòlt epi yo gen yo reprim revòlt.
+  opus             Gen pwoblèm nan wout ak bilding ak kay ak moun ki gen kay ak moun ki gen kay ak moun ki pa gen kay pou yo fè e ki gen pwoblèm pou yo fè gwo bri.
+
+  EN   He's got an excellent spirit.
+  m2m100-1.2b      Li te gen yon espwa ekselan.
+  m2m100-418m      Li te gen yon espès ki bon.
+  nllb-1.3b        Li gen yon lespri ekselan.
+  opus             Li te gen yon bèl etadespri.
+
+### RU
+
+  EN   Thank you, Brother Oar.
+  m2m100-1.2b      Спасибо вам, брат Оар.
+  m2m100-418m      Спасибо вам, брат Оар
+  nllb-1.3b        Спасибо, брат Оар.
+  opus             Спасибо, брат Оар.
+
+  EN   With a portion of the king's meat.
+  m2m100-1.2b      С порцией мяса короля.
+  m2m100-418m      С порцией мяса царя.
+  nllb-1.3b        С порцией королевского мяса.
+  opus             С частью мяса короля.
+
+  EN   And tribulations of this life.
+  m2m100-1.2b      И страдания этой жизни.
+  m2m100-418m      и тревоги этой жизни.
+  nllb-1.3b        И страдания этой жизни.
+  opus             и несчастья этой жизни.
+
+  EN   Send the Holy Spirit.
+  m2m100-1.2b      Посылайте Святого Духа.
+  m2m100-418m      Посылаем Святого Духа.
+  nllb-1.3b        Пошли Святого Духа.
+  opus             Пошли Святого Духа.
+
+  EN   Several verses of this passage.
+  m2m100-1.2b      Несколько стихов этого отрывка.
+  m2m100-418m      Несколько стихов из этого абзаца.
+  nllb-1.3b        Несколько стихов этого отрывка.
+  opus             Несколько стихов этого отрывка.
+
+  EN   He is not necessarily his day job is not to be a preacher, but his day job is to simply be faithful with an excellent spirit and to do whatever he's t
+  m2m100-1.2b      Он не обязательно его дневная работа не является проповедником, но его дневная работа - просто быть верным с отличным духом и делать все, что ему гово
+  m2m100-418m      Он не обязательно его дневный труд не быть проповедником, но его дневный труд состоит в том, чтобы быть просто верным с превосходным духом и делать то
+  nllb-1.3b        Он не обязательно должен быть проповедником, но его работа состоит в том, чтобы быть верным с отличным духом и делать все, что ему говорят, потому что
+  opus             Он не обязательно должен быть проповедником, но его работа - просто быть верным с прекрасным духом и делать все, что он говорит, потому что он подданн
+
+  EN   I don't know if you took this down, but he is one of the presidents.
+  m2m100-1.2b      Я не знаю, взяли ли вы это, но он один из президентов.
+  m2m100-418m      Я не знаю, вы ли это взяли, но он один из президентов.
+  nllb-1.3b        Не знаю, записали ли вы это, но он один из президентов.
+  opus             Не знаю, снял ли ты это, но он один из президентов.
+
+  EN   I'd rather have I'd rather name one more president and put Daniel over them so that the only person I meet with is Daniel to give me report because wh
+  m2m100-1.2b      Я бы предпочел бы назвать еще одного президента и поставить Даниила над ними, чтобы единственный человек, с которым я встречаюсь, был Даниилом, чтобы 
+  m2m100-418m      Я бы предпочел, чтобы я называл еще одного президента и поставил Даниила над ними, чтобы единственный человек, с которым я встречу, был Даниил, чтобы 
+  nllb-1.3b        Я бы предпочел, я бы предпочел назначить еще одного президента и поставить над ними Дэниела, чтобы единственный человек, с которым я встречаюсь, был Д
+  opus             Я бы предпочел, чтобы я назвал еще одного президента и поставил Дэниела выше них, чтобы единственный человек, с которым я встречаюсь, это Дэниел, чтоб
+
+  EN   There are problems with roads and buildings and people with uprisings and them having to squelch uprisings.
+  m2m100-1.2b      Есть проблемы с дорогами и зданиями, и люди с восстаниями и им приходится разжигать восстания.
+  m2m100-418m      Есть проблемы с дорогами и зданиями, и люди с восстаниями и они должны скручивать восстания.
+  nllb-1.3b        Есть проблемы с дорогами и зданиями, и люди с восстаниями, и им приходится подавлять восстания.
+  opus             Существуют проблемы с дорогами и зданиями, а также с людьми, страдающими восстанием, и им приходится разрушать восстания.
+
+  EN   He's got an excellent spirit.
+  m2m100-1.2b      У него отличный дух.
+  m2m100-418m      У него отличный дух.
+  nllb-1.3b        У него отличный дух.
+  opus             У него отличный дух.

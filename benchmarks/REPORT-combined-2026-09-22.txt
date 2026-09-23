@@ -1,0 +1,299 @@
+=================================================================================================================
+TRANSLATION BENCHMARK
+  Translate: cuda = NVIDIA GeForce RTX 3060
+  it-vivobook-s14: cuda = AMD Radeon 890M
+=================================================================================================================
+host             model         device  thr     load    wall    mean     p95    tr/s     VRAM  license
+-----------------------------------------------------------------------------------------------------------------
+Translate        m2m100-1.2b   cpu     1       37.5   784.2   2.293   5.021    0.44        —  MIT
+it-vivobook-s14  m2m100-1.2b   cpu     1       41.3   787.0   2.301   4.874    0.43        —  MIT
+Translate        m2m100-1.2b   cpu     3        2.5   454.9   3.875   8.088    0.75        —  MIT
+it-vivobook-s14  m2m100-1.2b   cpu     3        3.1   474.9   4.045   8.431    0.72        —  MIT
+Translate        m2m100-1.2b   cuda    1        5.1    54.4   0.159   0.332    6.29  2394.7M  MIT
+it-vivobook-s14  m2m100-1.2b   cuda    1        2.3   264.6   0.774   1.704    1.29  2417.5M  MIT
+Translate        m2m100-1.2b   cuda    3       14.8    53.4   0.457   0.980    6.41  7167.0M  MIT
+it-vivobook-s14  m2m100-1.2b   cuda    3        5.2   263.5   2.257   5.116    1.30  7235.7M  MIT
+Translate        m2m100-418m   cpu     1       16.5   403.3   1.179   2.421    0.85        —  MIT
+it-vivobook-s14  m2m100-418m   cpu     1       19.0   393.4   1.150   2.449    0.87        —  MIT
+Translate        m2m100-418m   cpu     3        2.7   234.1   1.808   3.847    1.46        —  MIT
+it-vivobook-s14  m2m100-418m   cpu     3        5.7   244.5   1.895   4.129    1.40        —  MIT
+Translate        m2m100-418m   cuda    1        2.6    29.2   0.085   0.174   11.72   952.2M  MIT
+it-vivobook-s14  m2m100-418m   cuda    1        1.7   132.1   0.386   0.839    2.59   975.0M  MIT
+Translate        m2m100-418m   cuda    3        7.4    28.5   0.231   0.521   12.01  2829.7M  MIT
+it-vivobook-s14  m2m100-418m   cuda    3        3.6   135.0   1.099   2.595    2.53  2898.4M  MIT
+Translate        nllb-1.3b     cpu     1        2.0   912.3   2.667   5.834    0.38        —  CC-BY-NC-4.0  (NOT usable commercially)
+it-vivobook-s14  nllb-1.3b     cpu     1        3.7   971.6   2.841   6.014    0.35        —  CC-BY-NC-4.0  (NOT usable commercially)
+Translate        nllb-1.3b     cpu     3        4.6   520.1   4.410   9.544    0.66        —  CC-BY-NC-4.0  (NOT usable commercially)
+it-vivobook-s14  nllb-1.3b     cpu     3        8.0   542.9   4.575   9.729    0.63        —  CC-BY-NC-4.0  (NOT usable commercially)
+Translate        nllb-1.3b     cuda    1        6.2    55.0   0.161   0.354    6.22  2645.0M  CC-BY-NC-4.0  (NOT usable commercially)
+it-vivobook-s14  nllb-1.3b     cuda    1        3.2   275.6   0.806   1.775    1.24  2668.7M  CC-BY-NC-4.0  (NOT usable commercially)
+Translate        nllb-1.3b     cuda    3       17.3    54.1   0.465   1.045    6.32  7917.3M  CC-BY-NC-4.0  (NOT usable commercially)
+it-vivobook-s14  nllb-1.3b     cuda    3       11.1   269.3   2.298   5.137    1.27  7983.9M  CC-BY-NC-4.0  (NOT usable commercially)
+
+QUALITY SIGNALS (no gold reference — these catch real failures)
+-----------------------------------------------------------------------------------------------------------------
+host             model         device  thr     empty   copied   loops  num kept  len ratio
+Translate        m2m100-1.2b   cpu     1        0.0%     0.0%    0.3%    100.0%       0.99
+it-vivobook-s14  m2m100-1.2b   cpu     1        0.0%     0.0%    0.3%    100.0%       0.99
+Translate        m2m100-1.2b   cpu     3        0.0%     0.0%    0.3%    100.0%       0.99
+it-vivobook-s14  m2m100-1.2b   cpu     3        0.0%     0.0%    0.3%    100.0%       0.99
+Translate        m2m100-1.2b   cuda    1        0.0%     0.0%    0.3%    100.0%       0.99
+it-vivobook-s14  m2m100-1.2b   cuda    1        0.0%     0.0%    0.3%    100.0%       1.00
+Translate        m2m100-1.2b   cuda    3        0.0%     0.0%    0.3%    100.0%       0.99
+it-vivobook-s14  m2m100-1.2b   cuda    3        0.0%     0.0%    0.3%    100.0%       1.00
+Translate        m2m100-418m   cpu     1        0.0%     0.0%    1.2%    100.0%       1.18
+it-vivobook-s14  m2m100-418m   cpu     1        0.0%     0.0%    1.2%    100.0%       1.18
+Translate        m2m100-418m   cpu     3        0.0%     0.0%    1.2%    100.0%       1.18
+it-vivobook-s14  m2m100-418m   cpu     3        0.0%     0.0%    1.2%    100.0%       1.18
+Translate        m2m100-418m   cuda    1        0.0%     0.0%    1.2%    100.0%       1.18
+it-vivobook-s14  m2m100-418m   cuda    1        0.0%     0.0%    1.2%    100.0%       1.18
+Translate        m2m100-418m   cuda    3        0.0%     0.0%    1.2%    100.0%       1.18
+it-vivobook-s14  m2m100-418m   cuda    3        0.0%     0.0%    1.2%    100.0%       1.18
+Translate        nllb-1.3b     cpu     1        0.0%     0.0%    0.3%    100.0%       0.96
+it-vivobook-s14  nllb-1.3b     cpu     1        0.0%     0.0%    0.3%    100.0%       0.99
+Translate        nllb-1.3b     cpu     3        0.0%     0.0%    0.3%    100.0%       0.96
+it-vivobook-s14  nllb-1.3b     cpu     3        0.0%     0.0%    0.3%    100.0%       0.99
+Translate        nllb-1.3b     cuda    1        0.0%     0.0%    0.3%    100.0%       0.96
+it-vivobook-s14  nllb-1.3b     cuda    1        0.0%     0.0%    0.3%    100.0%       0.99
+Translate        nllb-1.3b     cuda    3        0.0%     0.0%    0.3%    100.0%       0.96
+it-vivobook-s14  nllb-1.3b     cuda    3        0.0%     0.0%    0.3%    100.0%       0.99
+
+WHERE EACH MODEL RUNS BEST
+-----------------------------------------------------------------------------------------------------------------
+  [Translate]
+  m2m100-1.2b    CPU 2.293s vs GPU 0.159s = 14.4x  -> GPU is worth it
+  m2m100-418m    CPU 1.179s vs GPU 0.085s = 13.8x  -> GPU is worth it
+  nllb-1.3b      CPU 2.667s vs GPU 0.161s = 16.6x  -> GPU is worth it
+  [it-vivobook-s14]
+  m2m100-1.2b    CPU 2.301s vs GPU 0.774s = 3.0x  -> GPU is worth it
+  m2m100-418m    CPU 1.150s vs GPU 0.386s = 3.0x  -> GPU is worth it
+  nllb-1.3b      CPU 2.841s vs GPU 0.806s = 3.5x  -> GPU is worth it
+
+SHARED MODEL vs PER-LANGUAGE INSTANCES
+-----------------------------------------------------------------------------------------------------------------
+  [Translate]
+  m2m100-1.2b    cpu    serial 784.2s vs 3 instances 454.9s = 1.72x  <- parallelism pays
+  m2m100-1.2b    cuda   serial 54.4s vs 3 instances 53.4s = 1.02x
+                 VRAM 2394.7M -> 7167.0M
+  m2m100-418m    cpu    serial 403.3s vs 3 instances 234.1s = 1.72x  <- parallelism pays
+  m2m100-418m    cuda   serial 29.2s vs 3 instances 28.5s = 1.02x
+                 VRAM 952.2M -> 2829.7M
+  nllb-1.3b      cpu    serial 912.3s vs 3 instances 520.1s = 1.75x  <- parallelism pays
+  nllb-1.3b      cuda   serial 55.0s vs 3 instances 54.1s = 1.02x
+                 VRAM 2645.0M -> 7917.3M
+  [it-vivobook-s14]
+  m2m100-1.2b    cpu    serial 787.0s vs 3 instances 474.9s = 1.66x  <- parallelism pays
+  m2m100-1.2b    cuda   serial 264.6s vs 3 instances 263.5s = 1.00x
+                 VRAM 2417.5M -> 7235.7M
+  m2m100-418m    cpu    serial 393.4s vs 3 instances 244.5s = 1.61x  <- parallelism pays
+  m2m100-418m    cuda   serial 132.1s vs 3 instances 135.0s = 0.98x
+                 VRAM 975.0M -> 2898.4M
+  nllb-1.3b      cpu    serial 971.6s vs 3 instances 542.9s = 1.79x  <- parallelism pays
+  nllb-1.3b      cuda   serial 275.6s vs 3 instances 269.3s = 1.02x
+                 VRAM 2668.7M -> 7983.9M
+
+SAME CONFIGURATION ON EACH MACHINE (mean seconds per translation, lower is faster)
+-----------------------------------------------------------------------------------------------------------------
+  model         device  thr           Translate   it-vivobook-s14
+  m2m100-1.2b   cpu     1                 2.293             2.301
+  m2m100-1.2b   cpu     3                 3.875             4.045
+  m2m100-1.2b   cuda    1                 0.159             0.774
+  m2m100-1.2b   cuda    3                 0.457             2.257
+  m2m100-418m   cpu     1                 1.179             1.150
+  m2m100-418m   cpu     3                 1.808             1.895
+  m2m100-418m   cuda    1                 0.085             0.386
+  m2m100-418m   cuda    3                 0.231             1.099
+  nllb-1.3b     cpu     1                 2.667             2.841
+  nllb-1.3b     cpu     3                 4.410             4.575
+  nllb-1.3b     cuda    1                 0.161             0.806
+  nllb-1.3b     cuda    3                 0.465             2.298
+
+SIDE BY SIDE (read these — the metrics above cannot judge fluency)
+=================================================================================================================
+  from: m2m100-1.2b (Translate, cuda), m2m100-418m (Translate, cuda), nllb-1.3b (Translate, cuda)
+
+### ES
+
+  EN   Thank you, Brother Oar.
+  m2m100-1.2b Gracias hermano Oar.
+  m2m100-418m Gracias, hermano Oar
+  nllb-1.3b   Gracias, hermano Remador.
+
+  EN   As a church, we ought to be doing that.
+  m2m100-1.2b Como Iglesia, debemos hacer eso.
+  m2m100-418m Como iglesia, debemos hacerlo.
+  nllb-1.3b   Como iglesia, deberíamos estar haciendo eso.
+
+  EN   Now, I want to draw your attention tonight to some things that are in the passage, and hopefully that you'll be able to take some things with you abou
+  m2m100-1.2b Ahora, quiero llamar su atención esta noche a algunas cosas que están en el paso, y espero que pueda llevar algunas cosas con usted sobre esto.
+  m2m100-418m Ahora, quiero atraer su atención esta noche a algunas cosas que están en el paso, y espero que pueda tomar algunas cosas con usted sobre esto.
+  nllb-1.3b   Ahora, quiero llamar su atención esta noche a algunas cosas que están en el pasaje, y espero que puedan llevar algunas cosas con ustedes sobre esto.
+
+  EN   Be glad that we have so much more power and help in the New Testament in the spirit of God to help us.
+  m2m100-1.2b Alégrate de que tengamos tanto más poder y ayuda en el Nuevo Testamento en el espíritu de Dios para ayudarnos.
+  m2m100-418m Que te alegra que tengamos mucho más poder y ayuda en el Nuevo Testamento en el espíritu de Dios para ayudarnos.
+  nllb-1.3b   Esté contento de que tenemos mucho más poder y ayuda en el Nuevo Testamento en el espíritu de Dios para ayudarnos.
+
+  EN   I pray God tonight that from your word that you would use me as you have already spoken in my heart from the passage.
+  m2m100-1.2b Esta noche ruego a Dios que por tu palabra me uses como ya has hablado en mi corazón desde el pasaje.
+  m2m100-418m Pido a Dios esta noche que de tu palabra me usarías como ya habéis hablado en mi corazón desde el paso.
+  nllb-1.3b   Ruego a Dios esta noche que por tu palabra que me usaras como ya has hablado en mi corazón desde el pasaje.
+
+  EN   And we will jump down for time's sake tonight, not reading the entire passage because of time.
+  m2m100-1.2b Y saltaremos por el tiempo esta noche, no leeremos el pasaje entero por el tiempo.
+  m2m100-418m Y saltaremos por el tiempo esta noche, no leeremos todo el paso por el tiempo.
+  nllb-1.3b   Y saltaremos por el tiempo esta noche, no leeremos todo el pasaje por el tiempo.
+
+  EN   But this is his second political regime that he is a part of.
+  m2m100-1.2b Este es su segundo régimen político del que forma parte.
+  m2m100-418m Pero este es su segundo régimen político en el que forma parte.
+  nllb-1.3b   Pero este es su segundo régimen político del que es parte.
+
+  EN   We do not thank God for what we were born into or what God has given us as Liberty in Jesus Christ.
+  m2m100-1.2b No agradecemos a Dios por lo que nacimos o por lo que Dios nos ha dado como libertad en Jesucristo.
+  m2m100-418m No agradecemos a Dios por lo que nacíamos o lo que Dios nos ha dado como libertad en Jesucristo.
+  nllb-1.3b   No damos gracias a Dios por lo que nacimos o lo que Dios nos da como libertad en Jesucristo.
+
+  EN   All right, we worry about the things that we've been given or the portion of what God is doing in our lives and we feel overwhelmed.
+  m2m100-1.2b Bueno, nos preocupamos por las cosas que nos han sido dadas o por la parte de lo que Dios está haciendo en nuestras vidas y nos sentimos abrumados.
+  m2m100-418m Todo bien, nos preocupamos por las cosas que nos han sido dadas o por la parte de lo que Dios está haciendo en nuestras vidas y nos sentimos sobrepesa
+  nllb-1.3b   Bien, nos preocupamos por las cosas que nos han sido dadas o la parte de lo que Dios está haciendo en nuestras vidas y nos sentimos abrumados.
+
+  EN   You know what I'm saying?
+  m2m100-1.2b ¿Sabes lo que estoy diciendo?
+  m2m100-418m ¿Sabes lo que estoy diciendo?
+  nllb-1.3b   ¿Sabes lo que estoy diciendo?
+
+  EN   I just want to ask you tonight, listen, your little piece of what God has allowed you to rule and reign over, how do you go and talk to God on a regul
+  m2m100-1.2b Sólo quiero preguntarle esta noche, escucha, tu pequeña parte de lo que Dios te ha permitido gobernar y reinar, ¿cómo vas a hablar con Dios regularmen
+  m2m100-418m Sólo quiero preguntarle esta noche, escuchar, su pequeña pieza de lo que Dios te ha permitido gobernar y reinar sobre, ¿cómo vas y hablas con Dios de 
+  nllb-1.3b   Sólo quiero preguntarte esta noche, escucha, tu pequeña parte de lo que Dios te ha permitido gobernar y reinar, ¿cómo vas y hablas con Dios de forma r
+
+  EN   He's got an excellent spirit.
+  m2m100-1.2b Tiene un espíritu excelente.
+  m2m100-418m Tiene un espíritu excelente.
+  nllb-1.3b   Tiene un espíritu excelente.
+
+### HT
+
+  EN   Thank you, Brother Oar.
+  m2m100-1.2b Mèsi pou ou, frè Oar.
+  m2m100-418m Te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te 
+  nllb-1.3b   Mèsi, frè Rem.
+
+  EN   As a church, we ought to be doing that.
+  m2m100-1.2b Kòm yon legliz, nou ta dwe fè sa.
+  m2m100-418m kòm yon Eglè, nou dwe fè sa.
+  nllb-1.3b   Kòm yon legliz, se sa nou dwe fè.
+
+  EN   Now, I want to draw your attention tonight to some things that are in the passage, and hopefully that you'll be able to take some things with you abou
+  m2m100-1.2b Koulye a, mwen vle atann atansyon ou nan sa a ap nan kèk bagay ki nan pasaj, ak espere ke ou pral kapab pote kèk bagay ak ou sou sa.
+  m2m100-418m Mwen vle vle vle ale nan ou nan kèk bagay ki se nan pass, ak espere ou pral kapab pran kèk bagay ak ou sou sa a.
+  nllb-1.3b   Koulye a, mwen vle atire atansyon ou aswè a nan kèk bagay ki nan pasaj la, e espere ke ou pral kapab pran kèk bagay avèk ou sou sa.
+
+  EN   Be glad that we have so much more power and help in the New Testament in the spirit of God to help us.
+  m2m100-1.2b Se pou nou kontan ke nou gen anpil plis pouvwa ak èd nan Nouvo Testaman an nan l 'san Bondye a ede nou.
+  m2m100-418m Mwen te ale ke nou gen anpil plis pouvwa ak ajoute nan Testamèt Nou nan Espirite nan Bondye yo ede nou.
+  nllb-1.3b   Fè kè nou kontan ke nou gen anpil plis pouvwa ak èd nan Nouvo Testaman an nan lespri Bondye pou ede nou.
+
+  EN   I pray God tonight that from your word that you would use me as you have already spoken in my heart from the passage.
+  m2m100-1.2b Mwen te mande Bondye l 'soti nan non ou ke ou ta sèvi ak m ', tankou ou te deja pale nan kè m 'nan pasaj la.
+  m2m100-418m Mwen te role nan Dwi an sa a nan wout ou yo ki ou pral sèvi ak mwen kòm ou te deja te di nan hèl mwen nan pass.
+  nllb-1.3b   Mwen priye Bondye aswè a ke nan pawòl ou ke ou ta sèvi m 'jan ou te deja pale nan kè m' soti nan pasaj la.
+
+  EN   And we will jump down for time's sake tonight, not reading the entire passage because of time.
+  m2m100-1.2b Epi nou pral kite pou tan sa a, pa li tout pasaj la pou tan.
+  m2m100-418m E nou pral hop pou tan an, pa wè tout pass pou tan an.
+  nllb-1.3b   Epi nou pral sote desann pou tan an renmen aswè a, pa li pasaj la tout antye paske nan tan.
+
+  EN   But this is his second political regime that he is a part of.
+  m2m100-1.2b Men, sa a se dezyèm rejim politik li yo ki li se yon pati nan.
+  m2m100-418m Men, sa a se rektiman politik li yo nan ki li se yon pati.
+  nllb-1.3b   Men, sa a se dezyèm rejim politik li ke li se yon pati nan.
+
+  EN   We do not thank God for what we were born into or what God has given us as Liberty in Jesus Christ.
+  m2m100-1.2b Nou pa te di Bondye pou sa nou te fèt nan oswa sa ki Bondye te ba nou kòm libète nan Jezi Kris la.
+  m2m100-418m Mwen pa te ale nan bagay ki nou te fèt nan oswa ki Mwen te bay nan nou kòm Libè nan Jèsus Christ.
+  nllb-1.3b   Nou pa di Bondye mèsi pou sa nou fèt nan oswa sa Bondye ban nou kòm libète nan Jezikri.
+
+  EN   All right, we worry about the things that we've been given or the portion of what God is doing in our lives and we feel overwhelmed.
+  m2m100-1.2b Tout bon, nou ankouraje sou bagay yo ki nou te bay oswa pati a nan sa ki Bondye se fè nan lavi nou an ak nou santi yo ankouraje.
+  m2m100-418m Tout bon, nou pa gen pwoblèm sou bagay ki nou te resevwa oswa pati nan bagay ki nan Bondye fè nan lavi nou yo ak nou pa gen yon sentimite.
+  nllb-1.3b   Oke, nou enkyete sou bagay sa yo ke yo te ban nou oswa pati nan sa Bondye ap fè nan lavi nou epi nou santi yo akablan.
+
+  EN   You know what I'm saying?
+  m2m100-1.2b Èske w konnen sa mwen di?
+  m2m100-418m Eske ou konnen sa mwen te di?
+  nllb-1.3b   Ou konnen sa mwen di?
+
+  EN   I just want to ask you tonight, listen, your little piece of what God has allowed you to rule and reign over, how do you go and talk to God on a regul
+  m2m100-1.2b Mwen jis vle mande ou jodi a, koute, ti pati ou nan sa ki Bondye te pèmèt ou pou domine ak domine sou, ki jan ou ale ak pale ak Bondye sou yon baz reg
+  m2m100-418m Mwen sèlman vle di nou an, ouye, ti ti pi nan bagay la ki te fè nan Bondye a pou gouvènman ak règleman, ke ou vle mande ak di nan Bondye a sou yon fas
+  nllb-1.3b   Mwen jis vle mande w aswè a, koute, ti moso ou nan sa Bondye te pèmèt ou pou gouvène ak wa sou, ki jan ou ale epi pale ak Bondye sou yon baz regilye?
+
+  EN   He's got an excellent spirit.
+  m2m100-1.2b Li te gen yon espwa ekselan.
+  m2m100-418m Li te gen yon espès ki bon.
+  nllb-1.3b   Li gen yon lespri ekselan.
+
+### RU
+
+  EN   Thank you, Brother Oar.
+  m2m100-1.2b Спасибо вам, брат Оар.
+  m2m100-418m Спасибо вам, брат Оар
+  nllb-1.3b   Спасибо, брат Весло.
+
+  EN   As a church, we ought to be doing that.
+  m2m100-1.2b Как церковь, мы должны это делать.
+  m2m100-418m Как церковь, мы должны это делать.
+  nllb-1.3b   Как церковь, мы должны делать это.
+
+  EN   Now, I want to draw your attention tonight to some things that are in the passage, and hopefully that you'll be able to take some things with you abou
+  m2m100-1.2b Теперь я хочу привлечь ваше внимание сегодня вечером к некоторым вещам, которые находятся в процессе, и надеюсь, что вы сможете взять с собой некоторы
+  m2m100-418m Теперь я хочу привлечь вашу внимание сегодня вечером к некоторым вещам, которые находятся в прохождении, и надеюсь, что вы сможете взять с собой некот
+  nllb-1.3b   Я хочу обратить ваше внимание сегодня на некоторые вещи, которые есть в этом отрывке, и надеюсь, что вы сможете взять с собой некоторые вещи.
+
+  EN   Be glad that we have so much more power and help in the New Testament in the spirit of God to help us.
+  m2m100-1.2b Будьте рады, что у нас есть так много силы и помощи в Новом Завете в духе Бога, чтобы помочь нам.
+  m2m100-418m Радуйтесь, что у нас в Новом Завете намного больше силы и помощи в духе Бога, чтобы помочь нам.
+  nllb-1.3b   Радуйтесь, что у нас есть гораздо больше силы и помощи в Новом Завете в духе Бога, чтобы помочь нам.
+
+  EN   I pray God tonight that from your word that you would use me as you have already spoken in my heart from the passage.
+  m2m100-1.2b Я молюсь Богу сегодня вечером, что из вашего слова, что вы будете использовать меня, как вы уже говорили в моем сердце с отрывка.
+  m2m100-418m Я молюсь Богу сегодня вечером, что из вашего слова вы будете использовать меня, как вы уже говорили в моем сердце с прохождения.
+  nllb-1.3b   Я молюсь Богу сегодня вечером, чтобы по Твоему слову Ты использовал меня, как Ты уже говорил в моем сердце из отрывка.
+
+  EN   And we will jump down for time's sake tonight, not reading the entire passage because of time.
+  m2m100-1.2b И мы сегодня вечером будем прыгать вниз ради времени, не читая весь отрывок из-за времени.
+  m2m100-418m И мы скачим сегодня вечером ради времени, не читаем весь проход ради времени.
+  nllb-1.3b   И мы сегодня вскочим вниз ради времени, не читая весь отрывок из-за времени.
+
+  EN   But this is his second political regime that he is a part of.
+  m2m100-1.2b Но это его второй политический режим, частью которого он является.
+  m2m100-418m Но это его второй политический режим, в котором он является частью.
+  nllb-1.3b   Но это его второй политический режим, частью которого он является.
+
+  EN   We do not thank God for what we were born into or what God has given us as Liberty in Jesus Christ.
+  m2m100-1.2b Мы не благодарим Бога за то, в чем мы родились или что Бог дал нам как Свободу в Иисусе Христе.
+  m2m100-418m Мы не благодарим Бога за то, в чем мы родились, или за то, что Бог дал нам свободу в Иисусе Христе.
+  nllb-1.3b   Мы не благодарим Бога за то, в что мы родились или что Бог дал нам в Свободу во Христе Иисусе.
+
+  EN   All right, we worry about the things that we've been given or the portion of what God is doing in our lives and we feel overwhelmed.
+  m2m100-1.2b Всё хорошо, мы беспокоимся о вещах, которые нам дали, или о том, что Бог делает в нашей жизни, и мы чувствуем себя переполненными.
+  m2m100-418m Мы заботимся о том, что нам дано, или о том, что Бог делает в наших жизнях, и мы чувствуем себя перегруженными.
+  nllb-1.3b   Мы беспокоимся о том, что нам дано или о том, что Бог делает в нашей жизни, и чувствуем себя подавленными.
+
+  EN   You know what I'm saying?
+  m2m100-1.2b Знаете, что я говорю?
+  m2m100-418m Вы знаете, что я говорю?
+  nllb-1.3b   Понимаешь, что я имею в виду?
+
+  EN   I just want to ask you tonight, listen, your little piece of what God has allowed you to rule and reign over, how do you go and talk to God on a regul
+  m2m100-1.2b Я просто хочу спросить вас сегодня вечером, слушайте, ваш маленький кусок того, что Бог позволил вам править и править, как вы регулярно идете и разго
+  m2m100-418m Я просто хочу спросить вас сегодня вечером, слушайте, ваш маленький кусок того, что Бог позволил вам управлять и власть над, как вы идите и говорите с
+  nllb-1.3b   Я просто хочу спросить тебя сегодня, послушай, твоя маленькая часть того, что Бог позволил тебе править и царствовать над, как ты идешь и разговаривае
+
+  EN   He's got an excellent spirit.
+  m2m100-1.2b У него отличный дух.
+  m2m100-418m У него отличный дух.
+  nllb-1.3b   У него отличный дух.

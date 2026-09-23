@@ -1,0 +1,419 @@
+=========================================================================================================================
+TRANSLATION BENCHMARK
+  Translate: cuda = NVIDIA GeForce RTX 3060
+  it-vivobook-s14: cuda = AMD Radeon 890M
+=========================================================================================================================
+host             model             prec  device  thr     load    wall    mean     p95    tr/s     VRAM  license
+-------------------------------------------------------------------------------------------------------------------------
+Translate        aya-101           int4  cuda    1      ERROR: OutOfMemoryError: CUDA out of memory. Tried to allocate 160.00 MiB. GP
+it-vivobook-s14  aya-101           int4  cuda    1      ERROR: does not fit: loading exhausted the GPU-addressable memory (15.2 GB, h
+Translate        m2m100-1.2b       ?     cpu     1       37.5   784.2   2.293   5.021    0.44        —  MIT
+it-vivobook-s14  m2m100-1.2b       ?     cpu     1       41.3   787.0   2.301   4.874    0.43        —  MIT
+Translate        m2m100-1.2b       ?     cpu     3        2.5   454.9   3.875   8.088    0.75        —  MIT
+it-vivobook-s14  m2m100-1.2b       ?     cpu     3        3.1   474.9   4.045   8.431    0.72        —  MIT
+Translate        m2m100-1.2b       ?     cuda    1        5.1    54.4   0.159   0.332    6.29  2394.7M  MIT
+it-vivobook-s14  m2m100-1.2b       ?     cuda    1        2.3   264.6   0.774   1.704    1.29  2417.5M  MIT
+Translate        m2m100-1.2b       ?     cuda    3       14.8    53.4   0.457   0.980    6.41  7167.0M  MIT
+it-vivobook-s14  m2m100-1.2b       ?     cuda    3        5.2   263.5   2.257   5.116    1.30  7235.7M  MIT
+Translate        m2m100-418m       ?     cpu     1       16.5   403.3   1.179   2.421    0.85        —  MIT
+it-vivobook-s14  m2m100-418m       ?     cpu     1       19.0   393.4   1.150   2.449    0.87        —  MIT
+Translate        m2m100-418m       ?     cpu     3        2.7   234.1   1.808   3.847    1.46        —  MIT
+it-vivobook-s14  m2m100-418m       ?     cpu     3        5.7   244.5   1.895   4.129    1.40        —  MIT
+Translate        m2m100-418m       ?     cuda    1        2.6    29.2   0.085   0.174   11.72   952.2M  MIT
+it-vivobook-s14  m2m100-418m       ?     cuda    1        1.7   132.1   0.386   0.839    2.59   975.0M  MIT
+Translate        m2m100-418m       ?     cuda    3        7.4    28.5   0.231   0.521   12.01  2829.7M  MIT
+it-vivobook-s14  m2m100-418m       ?     cuda    3        3.6   135.0   1.099   2.595    2.53  2898.4M  MIT
+Translate        madlad-3b         bf16  cuda    1        7.6   118.8   0.347   0.784    2.88  5661.3M  Apache-2.0
+it-vivobook-s14  madlad-3b         bf16  cuda    1       14.0   523.4   1.530   3.453    0.65  5685.2M  Apache-2.0
+Translate        madlad-7b         int4  cuda    1      ERROR: OutOfMemoryError: CUDA out of memory. Tried to allocate 1.95 GiB. GPU 
+Translate        madlad-7b         int8  cuda    1      ERROR: OutOfMemoryError: CUDA out of memory. Tried to allocate 1.95 GiB. GPU 
+it-vivobook-s14  madlad-7b         int4  cuda    1      ERROR: does not fit: loading crawled as the 15.2 GB GPU-addressable ceiling w
+Translate        mistral-nemo-12b  int4  cuda    1      199.9   178.8   0.993   2.044    1.01 10535.0M  Apache-2.0
+it-vivobook-s14  mistral-nemo-12b  int4  cuda    1      ERROR: did not fit: loading never finished within the 6-hour limit. The load 
+Translate        nllb-1.3b         ?     cpu     1        2.0   912.3   2.667   5.834    0.38        —  CC-BY-NC-4.0  (NOT usable commercially)
+it-vivobook-s14  nllb-1.3b         ?     cpu     1        3.7   971.6   2.841   6.014    0.35        —  CC-BY-NC-4.0  (NOT usable commercially)
+Translate        nllb-1.3b         ?     cpu     3        4.6   520.1   4.410   9.544    0.66        —  CC-BY-NC-4.0  (NOT usable commercially)
+it-vivobook-s14  nllb-1.3b         ?     cpu     3        8.0   542.9   4.575   9.729    0.63        —  CC-BY-NC-4.0  (NOT usable commercially)
+Translate        nllb-1.3b         ?     cuda    1        6.2    55.0   0.161   0.354    6.22  2645.0M  CC-BY-NC-4.0  (NOT usable commercially)
+it-vivobook-s14  nllb-1.3b         ?     cuda    1        3.2   275.6   0.806   1.775    1.24  2668.7M  CC-BY-NC-4.0  (NOT usable commercially)
+Translate        nllb-1.3b         ?     cuda    3       17.3    54.1   0.465   1.045    6.32  7917.3M  CC-BY-NC-4.0  (NOT usable commercially)
+it-vivobook-s14  nllb-1.3b         ?     cuda    3       11.1   269.3   2.298   5.137    1.27  7983.9M  CC-BY-NC-4.0  (NOT usable commercially)
+Translate        opus              fp32  cpu     1       16.2    73.7   0.215   0.465    4.64        —  CC-BY-4.0
+it-vivobook-s14  opus              fp32  cpu     1       12.3    80.2   0.234   0.506    4.26        —  CC-BY-4.0
+Translate        opus              fp32  cpu     3        3.0    35.9   0.296   0.625    9.52        —  CC-BY-4.0
+it-vivobook-s14  opus              fp32  cpu     3       15.0    40.7   0.327   0.679    8.40        —  CC-BY-4.0
+Translate        opus              fp16  cuda    1        3.6     9.9   0.029   0.062   34.63   440.8M  CC-BY-4.0
+it-vivobook-s14  opus              fp16  cuda    1       11.7    21.9   0.064   0.136   15.58   463.6M  CC-BY-4.0
+Translate        opus              fp16  cuda    3        3.5     7.8   0.067   0.148   43.92   462.9M  CC-BY-4.0
+it-vivobook-s14  opus              fp16  cuda    3       10.8    21.0   0.181   0.389   16.30   531.4M  CC-BY-4.0
+Translate        qwen3-8b          int4  cuda    1      134.6   186.6   1.036   2.688    0.96  8180.2M  Apache-2.0
+Translate        qwen3-8b          int8  cuda    1       15.1   364.5   2.025   4.124    0.49 11378.0M  Apache-2.0
+it-vivobook-s14  qwen3-8b          int4  cuda    1       35.1   751.9   4.177   7.811    0.24  5964.7M  Apache-2.0
+
+QUALITY SIGNALS (no gold reference — these catch real failures)
+-------------------------------------------------------------------------------------------------------------------------
+host             model             prec  device  thr     empty   copied   loops  num kept  len ratio
+Translate        m2m100-1.2b       ?     cpu     1        0.0%     0.0%    0.3%    100.0%       0.99
+it-vivobook-s14  m2m100-1.2b       ?     cpu     1        0.0%     0.0%    0.3%    100.0%       0.99
+Translate        m2m100-1.2b       ?     cpu     3        0.0%     0.0%    0.3%    100.0%       0.99
+it-vivobook-s14  m2m100-1.2b       ?     cpu     3        0.0%     0.0%    0.3%    100.0%       0.99
+Translate        m2m100-1.2b       ?     cuda    1        0.0%     0.0%    0.3%    100.0%       0.99
+it-vivobook-s14  m2m100-1.2b       ?     cuda    1        0.0%     0.0%    0.3%    100.0%       1.00
+Translate        m2m100-1.2b       ?     cuda    3        0.0%     0.0%    0.3%    100.0%       0.99
+it-vivobook-s14  m2m100-1.2b       ?     cuda    3        0.0%     0.0%    0.3%    100.0%       1.00
+Translate        m2m100-418m       ?     cpu     1        0.0%     0.0%    1.2%    100.0%       1.18
+it-vivobook-s14  m2m100-418m       ?     cpu     1        0.0%     0.0%    1.2%    100.0%       1.18
+Translate        m2m100-418m       ?     cpu     3        0.0%     0.0%    1.2%    100.0%       1.18
+it-vivobook-s14  m2m100-418m       ?     cpu     3        0.0%     0.0%    1.2%    100.0%       1.18
+Translate        m2m100-418m       ?     cuda    1        0.0%     0.0%    1.2%    100.0%       1.18
+it-vivobook-s14  m2m100-418m       ?     cuda    1        0.0%     0.0%    1.2%    100.0%       1.18
+Translate        m2m100-418m       ?     cuda    3        0.0%     0.0%    1.2%    100.0%       1.18
+it-vivobook-s14  m2m100-418m       ?     cuda    3        0.0%     0.0%    1.2%    100.0%       1.18
+Translate        madlad-3b         bf16  cuda    1        0.0%     0.0%    0.6%     83.3%       0.99
+it-vivobook-s14  madlad-3b         bf16  cuda    1        0.0%     0.0%    0.3%     83.3%       0.99
+Translate        mistral-nemo-12b  int4  cuda    1        0.0%     0.0%    1.1%    100.0%       0.90
+Translate        nllb-1.3b         ?     cpu     1        0.0%     0.0%    0.3%    100.0%       0.96
+it-vivobook-s14  nllb-1.3b         ?     cpu     1        0.0%     0.0%    0.3%    100.0%       0.99
+Translate        nllb-1.3b         ?     cpu     3        0.0%     0.0%    0.3%    100.0%       0.96
+it-vivobook-s14  nllb-1.3b         ?     cpu     3        0.0%     0.0%    0.3%    100.0%       0.99
+Translate        nllb-1.3b         ?     cuda    1        0.0%     0.0%    0.3%    100.0%       0.96
+it-vivobook-s14  nllb-1.3b         ?     cuda    1        0.0%     0.0%    0.3%    100.0%       0.99
+Translate        nllb-1.3b         ?     cuda    3        0.0%     0.0%    0.3%    100.0%       0.96
+it-vivobook-s14  nllb-1.3b         ?     cuda    3        0.0%     0.0%    0.3%    100.0%       0.99
+Translate        opus              fp32  cpu     1        0.0%     0.0%    0.0%    100.0%       0.95
+it-vivobook-s14  opus              fp32  cpu     1        0.0%     0.0%    0.0%    100.0%       0.95
+Translate        opus              fp32  cpu     3        0.0%     0.0%    0.0%    100.0%       0.95
+it-vivobook-s14  opus              fp32  cpu     3        0.0%     0.0%    0.0%    100.0%       0.95
+Translate        opus              fp16  cuda    1        0.0%     0.0%    0.0%    100.0%       0.95
+it-vivobook-s14  opus              fp16  cuda    1        0.0%     0.0%    0.0%    100.0%       0.95
+Translate        opus              fp16  cuda    3        0.0%     0.0%    0.0%    100.0%       0.95
+it-vivobook-s14  opus              fp16  cuda    3        0.0%     0.0%    0.0%    100.0%       0.95
+Translate        qwen3-8b          int4  cuda    1        0.0%     0.0%    3.3%     66.7%       1.05
+Translate        qwen3-8b          int8  cuda    1        0.0%     0.0%    1.7%     83.3%       1.01
+it-vivobook-s14  qwen3-8b          int4  cuda    1        0.0%     0.0%    2.8%     66.7%       1.03
+
+WHERE EACH MODEL RUNS BEST
+-------------------------------------------------------------------------------------------------------------------------
+  [Translate]
+  m2m100-1.2b        CPU 2.293s vs GPU 0.159s = 14.4x  -> GPU is worth it
+  m2m100-418m        CPU 1.179s vs GPU 0.085s = 13.8x  -> GPU is worth it
+  madlad-3b          only measured on: cuda
+  mistral-nemo-12b   only measured on: cuda
+  nllb-1.3b          CPU 2.667s vs GPU 0.161s = 16.6x  -> GPU is worth it
+  opus               CPU 0.215s vs GPU 0.029s = 7.5x  -> GPU is worth it
+  qwen3-8b           only measured on: cuda
+  [it-vivobook-s14]
+  m2m100-1.2b        CPU 2.301s vs GPU 0.774s = 3.0x  -> GPU is worth it
+  m2m100-418m        CPU 1.150s vs GPU 0.386s = 3.0x  -> GPU is worth it
+  madlad-3b          only measured on: cuda
+  mistral-nemo-12b   only measured on: nothing
+  nllb-1.3b          CPU 2.841s vs GPU 0.806s = 3.5x  -> GPU is worth it
+  opus               CPU 0.234s vs GPU 0.064s = 3.7x  -> GPU is worth it
+  qwen3-8b           only measured on: cuda
+
+SHARED MODEL vs PER-LANGUAGE INSTANCES
+-------------------------------------------------------------------------------------------------------------------------
+  [Translate]
+  m2m100-1.2b        cpu    serial 784.2s vs 3 instances 454.9s = 1.72x  <- parallelism pays
+  m2m100-1.2b        cuda   serial 54.4s vs 3 instances 53.4s = 1.02x
+                 VRAM 2394.7M -> 7167.0M
+  m2m100-418m        cpu    serial 403.3s vs 3 instances 234.1s = 1.72x  <- parallelism pays
+  m2m100-418m        cuda   serial 29.2s vs 3 instances 28.5s = 1.02x
+                 VRAM 952.2M -> 2829.7M
+  nllb-1.3b          cpu    serial 912.3s vs 3 instances 520.1s = 1.75x  <- parallelism pays
+  nllb-1.3b          cuda   serial 55.0s vs 3 instances 54.1s = 1.02x
+                 VRAM 2645.0M -> 7917.3M
+  opus               cpu    serial 73.7s vs 3 instances 35.9s = 2.05x  <- parallelism pays
+  opus               cuda   serial 9.9s vs 3 instances 7.8s = 1.27x
+                 VRAM 440.8M -> 462.9M
+  [it-vivobook-s14]
+  m2m100-1.2b        cpu    serial 787.0s vs 3 instances 474.9s = 1.66x  <- parallelism pays
+  m2m100-1.2b        cuda   serial 264.6s vs 3 instances 263.5s = 1.00x
+                 VRAM 2417.5M -> 7235.7M
+  m2m100-418m        cpu    serial 393.4s vs 3 instances 244.5s = 1.61x  <- parallelism pays
+  m2m100-418m        cuda   serial 132.1s vs 3 instances 135.0s = 0.98x
+                 VRAM 975.0M -> 2898.4M
+  nllb-1.3b          cpu    serial 971.6s vs 3 instances 542.9s = 1.79x  <- parallelism pays
+  nllb-1.3b          cuda   serial 275.6s vs 3 instances 269.3s = 1.02x
+                 VRAM 2668.7M -> 7983.9M
+  opus               cpu    serial 80.2s vs 3 instances 40.7s = 1.97x  <- parallelism pays
+  opus               cuda   serial 21.9s vs 3 instances 21.0s = 1.05x
+                 VRAM 463.6M -> 531.4M
+
+SAME CONFIGURATION ON EACH MACHINE (mean seconds per translation, lower is faster)
+-------------------------------------------------------------------------------------------------------------------------
+  model             device  thr           Translate   it-vivobook-s14
+  m2m100-1.2b       cpu     1                 2.293             2.301
+  m2m100-1.2b       cpu     3                 3.875             4.045
+  m2m100-1.2b       cuda    1                 0.159             0.774
+  m2m100-1.2b       cuda    3                 0.457             2.257
+  m2m100-418m       cpu     1                 1.179             1.150
+  m2m100-418m       cpu     3                 1.808             1.895
+  m2m100-418m       cuda    1                 0.085             0.386
+  m2m100-418m       cuda    3                 0.231             1.099
+  madlad-3b         cuda    1                 0.347             1.530
+  nllb-1.3b         cpu     1                 2.667             2.841
+  nllb-1.3b         cpu     3                 4.410             4.575
+  nllb-1.3b         cuda    1                 0.161             0.806
+  nllb-1.3b         cuda    3                 0.465             2.298
+  opus              cpu     1                 0.215             0.234
+  opus              cpu     3                 0.296             0.327
+  opus              cuda    1                 0.029             0.064
+  opus              cuda    3                 0.067             0.181
+  qwen3-8b          cuda    1                 1.036             4.177
+
+SIDE BY SIDE (read these — the metrics above cannot judge fluency)
+=========================================================================================================================
+  from: m2m100-1.2b (Translate, cuda), m2m100-418m (Translate, cuda), madlad-3b (Translate, cuda), mistral-nemo-12b (Translate, cuda), nllb-1.3b (Translate, cuda), opus (Translate, cuda), qwen3-8b (Translate, cuda)
+
+### ES
+
+  EN   Thank you, Brother Oar.
+  m2m100-1.2b      Gracias hermano Oar.
+  m2m100-418m      Gracias, hermano Oar
+  madlad-3b        Gracias, hermano Oar.
+  mistral-nemo-12b Gracias, Hermano Remo
+  nllb-1.3b        Gracias, hermano Remador.
+  opus             Gracias, hermano Oar.
+  qwen3-8b         Gracias, hermano Oar.
+
+  EN   With a portion of the king's meat.
+  m2m100-1.2b      con una porción de la carne del rey.
+  m2m100-418m      Una porción de la carne del rey.
+  madlad-3b        Con una porción de la carne del rey.
+  mistral-nemo-12b Con una parte de la carne del rey
+  nllb-1.3b        Con una porción de la carne del rey.
+  opus             Con una porción de la carne del rey.
+  qwen3-8b         Con una parte de la carne del rey.
+
+  EN   And tribulations of this life.
+  m2m100-1.2b      y las tribulaciones de esta vida.
+  m2m100-418m      y las tribulaciones de esta vida.
+  madlad-3b        Y las tribulaciones de esta vida.
+  mistral-nemo-12b Y las tribulaciones de esta vida
+  nllb-1.3b        y las tribulaciones de esta vida.
+  opus             Y las tribulaciones de esta vida.
+  qwen3-8b         Y las tribulaciones de esta vida.
+
+  EN   Send the Holy Spirit.
+  m2m100-1.2b      Envíe el Espíritu Santo.
+  m2m100-418m      Envíe al Espíritu Santo.
+  madlad-3b        Envía el Espíritu Santo.
+  mistral-nemo-12b Enviar el Espíritu Santo
+  nllb-1.3b        Envía el Espíritu Santo.
+  opus             Envía al Espíritu Santo.
+  qwen3-8b         Envía el Espíritu Santo.
+
+  EN   Several verses of this passage.
+  m2m100-1.2b      Varios versos de este pasaje.
+  m2m100-418m      Varios versos de este paso.
+  madlad-3b        Varios versículos de este pasaje.
+  mistral-nemo-12b Varios versos de este pasaje.
+  nllb-1.3b        Varios versículos de este pasaje.
+  opus             Varios versículos de este pasaje.
+  qwen3-8b         Varias versículos de este pasaje.
+
+  EN   He is not necessarily his day job is not to be a preacher, but his day job is to simply be faithful with an excellent spirit and to do whatever he's t
+  m2m100-1.2b      No es necesariamente su trabajo de día no ser un predicador, sino su trabajo de día es simplemente ser fiel con un espíritu excelente y hacer lo que l
+  m2m100-418m      No es necesariamente su trabajo de día no es ser un predicador, pero su trabajo de día es simplemente ser fiel con un excelente espíritu y hacer lo qu
+  madlad-3b        No es necesariamente su trabajo diario no ser un predicador, pero su trabajo diario es simplemente ser fiel con un espíritu excelente y hacer lo que s
+  mistral-nemo-12b No necesariamente su trabajo diario es ser predicador, sino simplemente ser fiel con un espíritu excelente y hacer lo que se le dice, ya que es un suj
+  nllb-1.3b        No es necesariamente su trabajo diario no es ser un predicador, pero su trabajo diario es simplemente ser fiel con un espíritu excelente y hacer lo qu
+  opus             No es necesariamente su trabajo diario no es ser predicador, pero su trabajo diario es simplemente ser fiel con un espíritu excelente y hacer lo que s
+  qwen3-8b         No necesariamente su trabajo diario no es ser predicador, pero su trabajo diario es simplemente ser fiel con un excelente espíritu y hacer lo que se l
+
+  EN   I don't know if you took this down, but he is one of the presidents.
+  m2m100-1.2b      No sé si lo has tomado, pero él es uno de los presidentes.
+  m2m100-418m      No sé si lo tomaste, pero él es uno de los presidentes.
+  madlad-3b        No sé si lo has anotado, pero él es uno de los presidentes.
+  nllb-1.3b        No sé si lo has escrito, pero es uno de los presidentes.
+  opus             No sé si lo has quitado, pero es uno de los presidentes.
+
+  EN   I'd rather have I'd rather name one more president and put Daniel over them so that the only person I meet with is Daniel to give me report because wh
+  m2m100-1.2b      Prefiero que nombrara a otro presidente y poniera a Daniel por encima de ellos, para que la única persona con la que me encuentro sea Daniel para darm
+  m2m100-418m      Prefiero que nombré a otro presidente y ponga a Daniel sobre ellos para que la única persona que encuentro sea Daniel para darme un informe porque cua
+  madlad-3b        Prefiero nombrar a un presidente más y poner a Daniel sobre ellos para que la única persona con la que me reúna sea Daniel para darme un informe porqu
+  nllb-1.3b        Preferiría nombrar a otro presidente y poner a Daniel sobre ellos para que la única persona con la que me encuentre sea Daniel para que me informe por
+  opus             Prefiero nombrar a un presidente más y poner a Daniel sobre ellos para que la única persona con la que me encuentro sea Daniel para darme un informe p
+
+  EN   There are problems with roads and buildings and people with uprisings and them having to squelch uprisings.
+  m2m100-1.2b      Hay problemas con las carreteras y los edificios y con las personas con revueltas y tienen que deshacer las revueltas.
+  m2m100-418m      Hay problemas con las calles y los edificios y las personas con rebelión y tienen que desencadenar las rebeliones.
+  madlad-3b        Hay problemas con las carreteras y los edificios y la gente con levantamientos y ellos teniendo que sofocar los levantamientos.
+  nllb-1.3b        Hay problemas con las carreteras y los edificios y la gente con los levantamientos y ellos tienen que reprimir los levantamientos.
+  opus             Hay problemas con carreteras y edificios y personas con levantamientos y ellos tienen que sofocar levantamientos.
+
+  EN   He's got an excellent spirit.
+  m2m100-1.2b      Tiene un espíritu excelente.
+  m2m100-418m      Tiene un espíritu excelente.
+  madlad-3b        Tiene un espíritu excelente.
+  nllb-1.3b        Tiene un espíritu excelente.
+  opus             Tiene un espíritu excelente.
+
+### HT
+
+  EN   Thank you, Brother Oar.
+  m2m100-1.2b      Mèsi pou ou, frè Oar.
+  m2m100-418m      Te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te te 
+  madlad-3b        Mèsi, Frè Oar.
+  mistral-nemo-12b Mèsí, Frè Paga
+  nllb-1.3b        Mèsi, frè Rem.
+  opus             Mèsi, frè O.
+  qwen3-8b         Mèsi, Frè Oar.
+
+  EN   With a portion of the king's meat.
+  m2m100-1.2b      Yon pati nan manje a nan yon reyal.
+  m2m100-418m      Yon pati nan yon pati nan yon pati nan yon pati nan yon pati nan yon pati nan yon pati nan yon pati nan yon pati nan yon pati nan yon pati nan yon pat
+  madlad-3b        Avèk yon pati nan vyann wa a.
+  mistral-nemo-12b Avèk yon pwa nan la chèf.
+  nllb-1.3b        Avèk yon pòsyon vyann wa a.
+  opus             Li te gen yon pòsyon nan vyann wa a.
+  qwen3-8b         A yon pòsyon nan mwa kòn.
+
+  EN   And tribulations of this life.
+  m2m100-1.2b      Epi, yo te yon tribulasyon nan lavi sa a.
+  m2m100-418m      ak twal nan lavi sa a.
+  madlad-3b        11:11 Se pou nou pa fè anyen ki mal.
+  mistral-nemo-12b Pwofitasyon sa la
+  nllb-1.3b        Ak tribilasyon lavi sa a.
+  opus             E tribilasyon ki gen nan lavi sa a.
+  qwen3-8b         E tribulasyon yo an sa moun.
+
+  EN   Send the Holy Spirit.
+  m2m100-1.2b      Lè l sèvi avèk l 'Sant.
+  m2m100-418m      Enskri nan Espirite Sant.
+  madlad-3b        Envite Sentespri a.
+  mistral-nemo-12b Envoie l'Esprit Saint.
+  nllb-1.3b        Voye Sentespri a.
+  opus             Voye lespri sen.
+  qwen3-8b         Fèt Holy Spirit.
+
+  EN   Several verses of this passage.
+  m2m100-1.2b      Yon kèk vers nan pasaj sa a.
+  m2m100-418m      Yon kèk vers nan sa a.
+  madlad-3b        Gen plizyè fason pou fè sa.
+  mistral-nemo-12b Pla sòt vèrs sa pasaj.
+  nllb-1.3b        Gen plizyè vèsè nan pasaj sa a.
+  opus             Plizyè vèsè nan pasaj sa a.
+  qwen3-8b         Kèk vers yo nan pase sa.
+
+  EN   He is not necessarily his day job is not to be a preacher, but his day job is to simply be faithful with an excellent spirit and to do whatever he's t
+  m2m100-1.2b      Li pa nesesèman travay jou li yo pa yo dwe yon predikateur, men travay jou li yo se jis pou yo dwe fidèl ak yon espwa ekselan ak fè sa ki jan li te di
+  m2m100-418m      Li pa gen bezwen travay nan jou li se pa dwe yon pre, men travay nan jou li se sèlman yo dwe fid ak yon espès ki byen ak fè tout bagay ki li te di pas
+  madlad-3b        Li pa nesesèman travay li chak jou se pa pou l' vin yon pwofèt, men travay li chak jou se pou l' senpleman dwe fidèl ak yon lespri ekselan e pou l' fè
+  mistral-nemo-12b Li pa rete pou li te preche, men li te travay pou li se pou li se fidele ak espri bon ak fè sa ki te di li, paske li se yon sbject nan yon reyalite ki
+  nllb-1.3b        Li pa nesesèman travay jou li se pa pou yon predikatè, men travay jou li se senpleman pou fidèl ak yon lespri ekselan ak fè sa li te di paske li se yo
+  opus             Li pa oblije preche jou l la sèlman, men, travay li a se pou l montre li fidèl ak tout kè l e pou l fè tout sa l di paske li sou tè a yon wayòm li pra
+  qwen3-8b         Li pa bezwen ap reponsab pou yon lòd, men l ap reponsab pou ap fè yon bon espira ak yon espira kounye a ak ap fè kèk chwa li ap pran pou li ap fè kèk 
+
+  EN   I don't know if you took this down, but he is one of the presidents.
+  m2m100-1.2b      Mwen pa konnen si ou te pran sa a anba, men li se youn nan prezidan yo.
+  m2m100-418m      Mwen pa konnen si ou te pran sa a, men li se youn nan presidè yo.
+  madlad-3b        Mwen pa konnen si ou te pran sa, men li se youn nan prezidan yo.
+  nllb-1.3b        Mwen pa konnen si ou te pran sa a desann, men li se youn nan prezidan yo.
+  opus             Mwen pa konnen si ou pran sa a desann, men li se youn nan a.
+
+  EN   I'd rather have I'd rather name one more president and put Daniel over them so that the only person I meet with is Daniel to give me report because wh
+  m2m100-1.2b      Mwen ta pi bon yo te anonse yon lòt prezidan ak mete Daniel sou yo, se konsa ke moun sèlman mwen te jwenn se Daniel a bay m 'raporte paske lè li antre
+  m2m100-418m      Mwen pral pi renmen yo nomine yon lòt presidè ak mete Daniel sou yo, ki se yon sèl moun ki mwen reze nan Daniel yo bay m 'report, paske lè li entè nan
+  madlad-3b        Mwen ta pito gen mwen ta pito nonmen yon lòt prezidan ankò e mete Daniel sou yo pou sèl moun mwen rankontre se Daniel pou l bay m rapò paske lè li ant
+  nllb-1.3b        Mwen ta pito gen mwen ta pito nonmen yon sèl prezidan plis ak mete Danyèl sou yo pou ke moun nan sèlman mwen rankontre se Danyèl bay m 'rapò paske lè 
+  opus             Olye m te rele yon lòt prezidan epi m te mete Dànyèl sou yo, se pou sèl moun mwen rankontre a se pou l ban m rapò paske li antre nan twòn nan pou l pa
+
+  EN   There are problems with roads and buildings and people with uprisings and them having to squelch uprisings.
+  m2m100-1.2b      Gen pwoblèm ak wout ak bilding ak moun ki gen revolisyon ak yo dwe ranfòse revolisyon.
+  m2m100-418m      Gen pwoblèm ak rulo ak konstriksyon, ak moun ki gen revolt, ak yo dwe fè revolt.
+  madlad-3b        Gen pwoblèm ak wout yo ak bilding yo ak moun ki gen revolisyon yo ak yo gen pou yo sispann revolisyon yo.
+  nllb-1.3b        Gen pwoblèm ak wout ak bilding ak moun ki gen revòlt ak yo gen pou reprim revòlt.
+  opus             Gen pwoblèm nan wout ak bilding ak kay ak moun ki gen kay ak moun ki gen kay ak moun ki pa gen kay pou yo fè e ki gen pwoblèm pou yo fè gwo bri.
+
+  EN   He's got an excellent spirit.
+  m2m100-1.2b      Li te gen yon espwa ekselan.
+  m2m100-418m      Li te gen yon espès ki bon.
+  madlad-3b        Li gen yon lespri ekselan.
+  nllb-1.3b        Li gen yon lespri ekselan.
+  opus             Li te gen yon bèl etadespri.
+
+### RU
+
+  EN   Thank you, Brother Oar.
+  m2m100-1.2b      Спасибо вам, брат Оар.
+  m2m100-418m      Спасибо вам, брат Оар
+  madlad-3b        Спасибо, брат Ор.
+  mistral-nemo-12b Спасибо, брат Вёсло
+  nllb-1.3b        Спасибо, брат Весло.
+  opus             Спасибо, брат Оар.
+  qwen3-8b         Спасибо, брат Оар.
+
+  EN   With a portion of the king's meat.
+  m2m100-1.2b      С порцией мяса короля.
+  m2m100-418m      С порцией мяса царя.
+  madlad-3b        С частью мяса царя.
+  mistral-nemo-12b Кусок мяса короля
+  nllb-1.3b        С порцией королевского мяса.
+  opus             С частью мяса короля.
+  qwen3-8b         С частью мяса короля.
+
+  EN   And tribulations of this life.
+  m2m100-1.2b      И страдания этой жизни.
+  m2m100-418m      и тревоги этой жизни.
+  madlad-3b        И скорби этой жизни.
+  mistral-nemo-12b И скорби этой жизни.
+  nllb-1.3b        и тяготы жизни ближней.
+  opus             и несчастья этой жизни.
+  qwen3-8b         И трудности этой жизни.
+
+  EN   Send the Holy Spirit.
+  m2m100-1.2b      Посылайте Святого Духа.
+  m2m100-418m      Посылаем Святого Духа.
+  madlad-3b        Посылай Святого Духа.
+  mistral-nemo-12b Послать Святого Духа
+  nllb-1.3b        Пошли Святого Духа.
+  opus             Пошли Святого Духа.
+  qwen3-8b         Послать Святого Духа.
+
+  EN   Several verses of this passage.
+  m2m100-1.2b      Несколько стихов этого отрывка.
+  m2m100-418m      Несколько стихов из этого абзаца.
+  madlad-3b        Несколько стихов из этого отрывка.
+  mistral-nemo-12b Несколько стихов этого отрывка.
+  nllb-1.3b        Несколько стихов этого отрывка.
+  opus             Несколько стихов этого отрывка.
+  qwen3-8b         Несколько строк этого отрывка.
+
+  EN   He is not necessarily his day job is not to be a preacher, but his day job is to simply be faithful with an excellent spirit and to do whatever he's t
+  m2m100-1.2b      Он не обязательно его дневная работа не является проповедником, но его дневная работа - просто быть верным с отличным духом и делать все, что ему гово
+  m2m100-418m      Он не обязательно его дневный труд не быть проповедником, но его дневный труд состоит в том, чтобы быть просто верным с превосходным духом и делать то
+  madlad-3b        Он не обязательно его ежедневная работа не быть проповедником, но его ежедневная работа просто быть верным с превосходным духом и делать все, что ему 
+  mistral-nemo-12b Он не обязательно является проповедником, но его работа - быть верным с добрым духом и делать то, что ему говорят, так как он подданный в королевстве,
+  nllb-1.3b        Его не обязательно, что его дневная работа - не быть проповедником, но его дневная работа - просто быть верным с отличным духом и делать все, что ему 
+  opus             Он не обязательно должен быть проповедником, но его работа - просто быть верным с прекрасным духом и делать все, что он говорит, потому что он подданн
+  qwen3-8b         Он не обязательно должен быть проповедником, но его работа — просто быть верным с отличным духом и делать всё, что ему говорят, потому что он подданны
+
+  EN   I don't know if you took this down, but he is one of the presidents.
+  m2m100-1.2b      Я не знаю, взяли ли вы это, но он один из президентов.
+  m2m100-418m      Я не знаю, вы ли это взяли, но он один из президентов.
+  madlad-3b        Не знаю, записали ли вы это, но он один из президентов.
+  nllb-1.3b        Не знаю, записали ли вы это, но он один из президентов.
+  opus             Не знаю, снял ли ты это, но он один из президентов.
+
+  EN   I'd rather have I'd rather name one more president and put Daniel over them so that the only person I meet with is Daniel to give me report because wh
+  m2m100-1.2b      Я бы предпочел бы назвать еще одного президента и поставить Даниила над ними, чтобы единственный человек, с которым я встречаюсь, был Даниилом, чтобы 
+  m2m100-418m      Я бы предпочел, чтобы я называл еще одного президента и поставил Даниила над ними, чтобы единственный человек, с которым я встречу, был Даниил, чтобы 
+  madlad-3b        Я бы предпочел иметь Я бы предпочел иметь еще одного президента и поставить Даниэля над ними так, что единственный человек, с которым я встречаюсь, эт
+  nllb-1.3b        Я бы предпочел, чтобы я назвал еще одного президента и поставил Дэниела над ними так что единственный человек, с которым я встречаюсь, это Дэниел, что
+  opus             Я бы предпочел, чтобы я назвал еще одного президента и поставил Дэниела выше них, чтобы единственный человек, с которым я встречаюсь, это Дэниел, чтоб
+
+  EN   There are problems with roads and buildings and people with uprisings and them having to squelch uprisings.
+  m2m100-1.2b      Есть проблемы с дорогами и зданиями, и люди с восстаниями и им приходится разжигать восстания.
+  m2m100-418m      Есть проблемы с дорогами и зданиями, и люди с восстаниями и они должны скручивать восстания.
+  madlad-3b        Есть проблемы с дорогами и зданиями, а также с людьми, которые поднимают восстания, и им приходится подавлять восстания.
+  nllb-1.3b        Есть проблемы с дорогами и зданиями, и люди с восстаниями, и им приходится подавлять восстания.
+  opus             Существуют проблемы с дорогами и зданиями, а также с людьми, страдающими восстанием, и им приходится разрушать восстания.
+
+  EN   He's got an excellent spirit.
+  m2m100-1.2b      У него отличный дух.
+  m2m100-418m      У него отличный дух.
+  madlad-3b        У него отличная натура.
+  nllb-1.3b        У него отличный дух.
+  opus             У него отличный дух.
