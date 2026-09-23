@@ -1,3 +1,8 @@
+> **Superseded 2026-09-23 by `docs/NEW-REPO-PLAN.md`.** That plan moves both
+> projects into a *new* repository rather than folding the sermon archive into
+> this one, because this repo is public and the archive's history is not.
+> Kept for the path-reference table and the decision record.
+
 # Plan: one repository for the live translator and the sermon archive
 
 **Written 2026-09-22. Nothing has been moved.** This is the plan to review
