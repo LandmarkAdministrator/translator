@@ -1,0 +1,51 @@
+# Live multilingual HLS packager — reference-host configuration.
+#
+# Every value here is a default from livestream/config.py made explicit.
+# Delete anything you are happy to inherit.
+
+# --- source ---------------------------------------------------------------
+# rtmp: listen for the ATEM's push.  Point the ATEM's streaming output at
+#       rtmp://<this-host>:1935/live/atem with a 1080p profile.
+# file: loop a recording at real time — how this is developed and tested.
+source: rtmp
+rtmp_url: "rtmp://0.0.0.0:1935/live/atem"
+# input_file: /path/to/service.mp4
+loop_input: true
+
+# --- encode ---------------------------------------------------------------
+# vaapi = Radeon 890M (the idle iGPU on the Translate PC) — the intended
+#         production setting; the RTX 3060 stays entirely on CUDA.
+# nvenc = RTX 3060.  x264 = CPU; better quality, much more CPU.
+encoder: vaapi
+vaapi_device: /dev/dri/renderD128
+audio_bitrate_kbps: 128
+# framerate: 30          # unset = follow the source
+
+renditions:
+  - { height: 1080, bitrate_kbps: 4500, maxrate_kbps: 5000, bufsize_kbps: 10000 }
+  - { height: 720,  bitrate_kbps: 2500, maxrate_kbps: 2800, bufsize_kbps: 5000 }
+  - { height: 480,  bitrate_kbps: 1200, maxrate_kbps: 1400, bufsize_kbps: 2400 }
+
+# --- timing ---------------------------------------------------------------
+segment_seconds: 4.0
+# The dub stage's budget.  Placing sentence N needs t0 of sentence N+1, so
+# this must exceed the translator's end-to-end latency (~8 s) plus one
+# sentence.  Below ~30 s the lookahead gets thin.
+delay_seconds: 45.0
+window_segments: 6
+
+# --- layout ---------------------------------------------------------------
+# tmpfs is the right home for these: small, hot, and nothing here needs to
+# survive a reboot.
+staging_dir: /run/livestream/staging
+public_dir: /run/livestream/public
+archive_segments: false
+
+# --- tracks ---------------------------------------------------------------
+# Declared now so the manifest shape is final; the dub languages go active
+# in phase 4 and the change is configuration, not surgery.
+audio_tracks:
+  - { language: en, name: "English",         default: true,  active: true  }
+  - { language: es, name: "Español",         active: false }
+  - { language: ht, name: "Kreyòl Ayisyen",  active: false }
+  - { language: ru, name: "Русский",         active: false }
