@@ -2,7 +2,7 @@
 
 **Written 2026-09-23.** Supersedes `docs/MERGE-PLAN.md`, which assumed the
 sermon archive would move *into* this repository. It will not: both move into a
-**new repository**, stripped of everything that is ours alone, with a setup
+**new repository — `hearken`**, stripped of everything that is ours alone, with a setup
 flow that stands the whole thing up for a church that is not us. This document
 is the plan for that, and for the piece that comes first — replacing Google
 Sheets.
@@ -35,6 +35,7 @@ build first.
 
 | | Decision | Recommendation |
 |---|---|---|
+| D0 | Name | **Hearken** — settled 2026-09-23, see §4.0 |
 | D1 | New repo history | **Clean initial commit. No history import.** |
 | D2 | New repo visibility | **Private until the scrub is verified, then public.** |
 | D3 | Sheets replacement | **SQLite owned by one small HTTP service, LAN clients.** |
@@ -190,7 +191,7 @@ keys across both worktrees:
 
 | Where | What it is | Becomes |
 |---|---|---|
-| `plugin/<our-slug>-sermons/**` (~600 hits) | plugin slug, PHP class prefix, CSS class prefix, option and table names, author | mechanical rename to a generic slug, plus a migration step for the live site's options/tables |
+| `plugin/<our-slug>-sermons/**` (~600 hits) | plugin slug, PHP class prefix, CSS class prefix, option and table names, author | mechanical rename to `hearken-sermons` / `Hearken_` / `.hearken-`, plus a migration step for the live site's options and tables |
 | `scripts/normalize_speakers*.py` (71) | our speakers' names and spellings | a data file, `config/speakers.yaml`, shipped empty |
 | `scripts/caddy_*.py`, `setup_caddy_*.sh` (36) | our domains and download host | config keys |
 | `scripts/lbc-usb-backup-weekly.sh` (18) | our drive labels and mount points | config keys |
@@ -204,19 +205,55 @@ safe.
 
 ## 4. The new repository
 
+### 4.0 The name
+
+**Hearken.** The King James spelling, and the King James sense: not merely to
+hear but to *give heed* — which is what preaching asks of the person in the
+pew, and the one thing both halves of this system exist to make possible, in
+the room and afterwards.
+
+The written name and the typed name are deliberately different. `hearken` is
+the rarer spelling, so nothing a human types at four in the morning depends on
+getting it right:
+
+```
+Hearken                     the product: README, poster, hearken.church
+hark live   hark archive     the two entry points
+hark setup  hark doctor      the install flow
+hearken-live.service        units and packages carry the full name
+hearken-web.service
+/etc/hearken/site.yaml      config; the box answers to hearken.local
+```
+
+`hark` is the command because it is four letters, has exactly one spelling, and
+reads as an imperative at a prompt. `harken` is accepted as an alias for it, so
+the American spelling never produces a "command not found".
+
+**Before Phase 2, worth doing:** `hearken.church`, `hearken.org` and
+`hearken.dev` did not resolve when I checked on 2026-09-23, and `hearken.com`
+is a parked for-sale listing. That was a DNS lookup, not a registrar check — so
+confirm at a registrar, and if they are genuinely free, take `hearken.church`
+plus `harken.church` as the misspelling alias. Cheap, and a permanent name is
+worth the ten dollars.
+
+The two halves are **Hearken Live** and **Hearken Archive** in anything a human
+reads; `live/` and `archive/` in the tree.
+
+### 4.1 Layout
+
 One repo, one installable package, two entry points — not a monorepo of two
 independent projects, because the whole reason to do this is that the shared
 half stops being written twice.
 
 ```
-<newrepo>/
+hearken/
   core/         models, ASR, translation, TTS, text filters, number guard,
                 glossary, config loading, logging          [shared]
   store/        schema, service, client, migrations, console  [shared]
   live/         real-time: capture, streaming ASR, coordinator, scheduler
   archive/      post-service: ingest, stages, workers, manifest, publish
   web/          the asyncio server, auth, /admin, the live page, /archive
-  plugin/       the WordPress plugin (generic slug)
+  plugin/       the WordPress plugin (hearken-sermons)
   setup/        install.sh, doctor, first-run wizard, model prefetch
   config/       *.example.* only — no church data, ever
   docs/  tests/
@@ -236,7 +273,7 @@ What actually merges, rather than sits side by side:
   two programs and becomes one scheduler.
 - **install** — one script, one doctor, one wizard.
 
-### 4.1 Setting it up at a church
+### 4.2 Setting it up at a church
 
 `./setup.sh` — detects the GPU (CUDA / ROCm / CPU / Apple), asks what to
 install (live only, archive only, both), then hands off to a first-run web
@@ -261,7 +298,7 @@ Nothing deploys to the Translate PC until Phase 5, and never on a Saturday.
 |---|---|---|---|
 | 0 | **Sheets replacement** | §2, built in this repo, flagged off, not deployed | ~1 week + dual-read week |
 | 1 | **Scrub** | §3 inventory turned into config + `check_no_local_data.sh` | 2 days |
-| 2 | **New repo, live side** | skeleton, `core/`, live stack runs from the new layout on the laptop | 2–3 days |
+| 2 | **New repo, live side** | create `hearken`, skeleton, `core/`, live stack runs from the new layout on the laptop | 2–3 days |
 | 3 | **Archive side** | pipeline moves in, ports to the store client, Sheets code deleted | 3–4 days |
 | 4 | **Setup** | wizard, doctor, docs, fresh-machine install end to end | 2–3 days |
 | 5 | **Cutover** | PC runs the new layout; old repos go read-only | 1 day + one Sunday of watching |
